@@ -13,6 +13,7 @@ import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineScope
@@ -43,6 +44,10 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
+    if (FirebaseApp.getApps(context).isEmpty()) {
+        onUnauthenticated()
+        return
+    }
     if (Firebase.auth.currentUser != null) {
         onAuthSuccess()
         return
@@ -83,6 +88,10 @@ fun onGoogleSignInClicked(
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
+    if (FirebaseApp.getApps(context).isEmpty()) {
+        onAuthError("إعدادات Firebase غير مهيأة في هذه النسخة. يمكنك المتابعة محليًا.")
+        return
+    }
     val clientId = findGoogleWebClientId(context) ?: run {
         onAuthError("تعذر العثور على إعدادات تسجيل الدخول بحساب Google")
         return
