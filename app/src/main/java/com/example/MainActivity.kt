@@ -1,7 +1,10 @@
 package com.example
 
 import android.content.Context
+import android.content.Intent
+import android.app.AlertDialog
 import android.os.Bundle
+import java.io.File
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -94,6 +97,25 @@ class MainActivity : ComponentActivity() {
             WarehouseLedgerTheme(darkTheme = false) {
                 AppContent()
             }
+        }
+
+        val crashFile = File(filesDir, "last_startup_crash.txt")
+        val previousCrash = runCatching { crashFile.takeIf { it.isFile }?.readText(Charsets.UTF_8) }.getOrNull()
+        if (!previousCrash.isNullOrBlank()) {
+            AlertDialog.Builder(this)
+                .setTitle("تقرير توقف التطبيق")
+                .setMessage(previousCrash.take(12000))
+                .setPositiveButton("مشاركة التقرير") { _, _ ->
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_SUBJECT, "تقرير انهيار تطبيق حسابات المخزن")
+                        putExtra(Intent.EXTRA_TEXT, previousCrash)
+                    }
+                    startActivity(Intent.createChooser(send, "إرسال تقرير الخطأ"))
+                }
+                .setNegativeButton("إغلاق", null)
+                .setNeutralButton("حذف التقرير") { _, _ -> crashFile.delete() }
+                .show()
         }
     }
 }
