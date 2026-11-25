@@ -73,6 +73,7 @@ import com.example.ui.state.WarehouseViewModel
 import com.example.ui.theme.LedgerNavy
 import com.example.ui.theme.WarehouseLedgerTheme
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
@@ -101,17 +102,30 @@ class MainActivity : ComponentActivity() {
 fun AppContent() {
     val context = LocalContext.current
     val prefs = remember(context) { context.getSharedPreferences(PREFS_APP, Context.MODE_PRIVATE) }
-    var currentUser by remember { mutableStateOf(Firebase.auth.currentUser) }
-    var isLocalMode by remember { mutableStateOf(prefs.getBoolean(KEY_LOCAL_MODE, false)) }
+    // Firebase is optional: AI Studio/CI builds may not include google-services.json.
+    // Never access FirebaseAuth until the default Firebase app is initialized.
+    val firebaseConfigured = remember(context) {
+        FirebaseApp.getApps(context).isNotEmpty()
+    }
+    var currentUser by remember(firebaseConfigured) {
+        mutableStateOf(if (firebaseConfigured) Firebase.auth.currentUser else null)
+    }
+    var isLocalMode by remember(firebaseConfigured) {
+        mutableStateOf(prefs.getBoolean(KEY_LOCAL_MODE, false) || !firebaseConfigured)
+    }
     var pendingSyncFromLocal by remember { mutableStateOf(false) }
 
-    DisposableEffect(Unit) {
-        val listener = FirebaseAuth.AuthStateListener { auth ->
-            currentUser = auth.currentUser
-        }
-        Firebase.auth.addAuthStateListener(listener)
-        onDispose {
-            Firebase.auth.removeAuthStateListener(listener)
+    DisposableEffect(firebaseConfigured) {
+        if (firebaseConfigured) {
+            val listener = FirebaseAuth.AuthStateListener { auth ->
+                currentUser = auth.currentUser
+            }
+            Firebase.auth.addAuthStateListener(listener)
+            onDispose {
+                Firebase.auth.removeAuthStateListener(listener)
+            }
+        } else {
+            onDispose { }
         }
     }
 
