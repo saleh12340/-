@@ -1,0 +1,6 @@
+{
+  "name": "حسابات المخزن",
+  "description": "تطبيق إدارة حسابات العملاء والمخازن والفواتير مع حساب تكلفة الشراء التلقائي للوحدات المتعددة",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

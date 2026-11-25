@@ -1,0 +1,125 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Warehouse inventory item with multi-level unit conversion tiers and base unit purchase cost.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "name": { "type": "string", "description": "Product name." },
+        "barcode": { "type": "string", "description": "Optional barcode string." },
+        "baseUnitName": { "type": "string", "description": "Name of the smallest accounting unit (e.g., حبة)." },
+        "defaultUnitName": { "type": "string", "description": "Default unit name for display/transactions." },
+        "unitTiers": {
+          "type": "array",
+          "description": "Ordered list of larger unit tiers above base unit (each with name and factorToPrevious)."
+        },
+        "baseCost": { "type": "number", "description": "Full-precision accounting purchase cost per smallest base unit." },
+        "baseSellPrice": { "type": "number", "description": "Selling price per smallest base unit." },
+        "stockBaseQty": { "type": "number", "description": "Available inventory quantity in smallest base units." },
+        "trackExpiry": { "type": "boolean", "description": "Whether expiry date tracking is enabled." },
+        "expiryDate": { "type": "string", "description": "Optional expiry date string (YYYY-MM-DD)." },
+        "minStockAlert": { "type": "number", "description": "Low stock threshold in base units." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." }
+      },
+      "required": [
+        "userId",
+        "name",
+        "barcode",
+        "baseUnitName",
+        "defaultUnitName",
+        "unitTiers",
+        "baseCost",
+        "baseSellPrice",
+        "stockBaseQty",
+        "trackExpiry",
+        "expiryDate",
+        "minStockAlert",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Contact": {
+      "title": "Contact",
+      "description": "Customer or supplier ledger account.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "name": { "type": "string", "description": "Customer or supplier name." },
+        "contactType": { "type": "string", "enum": ["CUSTOMER", "SUPPLIER"], "description": "Account type." },
+        "phone": { "type": "string", "description": "Optional phone number." },
+        "balance": { "type": "number", "description": "Current balance (positive = receivable for customer, payable for supplier)." },
+        "notes": { "type": "string", "description": "Optional notes." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." }
+      },
+      "required": ["userId", "name", "contactType", "phone", "balance", "notes", "createdAt", "updatedAt"]
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "description": "Purchase or sale invoice snapshot with atomic inventory and balance impact.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "invoiceNumber": { "type": "string", "description": "Invoice serial number." },
+        "invoiceType": { "type": "string", "enum": ["PURCHASE", "SALE"], "description": "Purchase or Sale." },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "CREDIT"], "description": "Cash or Credit." },
+        "contactId": { "type": "string", "description": "Linked customer/supplier ID or empty for walk-in cash." },
+        "contactName": { "type": "string", "description": "Contact display name snapshot." },
+        "totalAmount": { "type": "number", "description": "Invoice grand total." },
+        "lines": { "type": "array", "description": "Bounded list of invoice line snapshots." },
+        "notes": { "type": "string", "description": "Optional notes." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." }
+      },
+      "required": [
+        "userId",
+        "invoiceNumber",
+        "invoiceType",
+        "paymentMethod",
+        "contactId",
+        "contactName",
+        "totalAmount",
+        "lines",
+        "notes",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Cash receipt or supplier payment voucher with atomic balance tracking.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID." },
+        "contactId": { "type": "string", "description": "Linked contact ID." },
+        "contactName": { "type": "string", "description": "Contact name snapshot." },
+        "contactType": { "type": "string", "enum": ["CUSTOMER", "SUPPLIER"], "description": "Contact type." },
+        "amount": { "type": "number", "description": "Positive payment amount." },
+        "notes": { "type": "string", "description": "Optional voucher notes." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp (FieldValue.serverTimestamp())." }
+      },
+      "required": ["userId", "contactId", "contactName", "contactType", "amount", "notes", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Per-user warehouse products with multi-unit conversion hierarchy and base unit cost."
+    },
+    "/users/{userId}/contacts/{contactId}": {
+      "schema": { "$ref": "#/entities/Contact" },
+      "description": "Per-user customers and suppliers."
+    },
+    "/users/{userId}/invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/Invoice" },
+      "description": "Per-user purchase and sales invoices."
+    },
+    "/users/{userId}/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Per-user payment receipts/vouchers."
+    }
+  }
+}

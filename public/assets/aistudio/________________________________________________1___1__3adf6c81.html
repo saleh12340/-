@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>عرض البرومبت ومعاينة التصميم - بقالة العزي</title>
+
+  <!-- استيراد خط الأميري -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    * {
+      font-family: 'Amiri', serif !important;
+      box-sizing: border-box;
+    }
+
+    body {
+      background-color: #f1f5f9;
+      color: #0f172a;
+    }
+
+    .prompt-code-box {
+      font-family: 'Amiri', monospace !important;
+      white-space: pre-wrap;
+      line-height: 1.65;
+    }
+  </style>
+</head>
+<body class="p-2 sm:p-4 max-w-5xl mx-auto">
+
+  <!-- شريط العنوان -->
+  <header class="bg-[#1a365d] text-white rounded-lg p-3 mb-4 shadow flex flex-wrap items-center justify-between gap-2">
+    <div class="flex items-center gap-2">
+      <span class="bg-white text-[#1a365d] font-bold w-8 h-8 rounded-full flex items-center justify-center text-sm" dir="ltr">AZ</span>
+      <div>
+        <h1 class="text-base sm:text-lg font-bold leading-tight">صفحة مراجعة البرومبت ومعاينة التصميم الحي</h1>
+        <p class="text-xs text-blue-200">راجع بنود البرومبت بالأسفل وقارنها مباشرة بالمعاينة الحية لتطبيق بقالة العزي</p>
+      </div>
+    </div>
+    <button onclick="copyPromptText()" class="bg-amber-400 hover:bg-amber-300 text-[#1a365d] font-bold px-4 py-1.5 rounded-md text-sm shadow transition flex items-center gap-1.5">
+      <span>📋 نسخ البرومبت كاملاً</span>
+    </button>
+  </header>
+
+  <!-- إشعار النسخ -->
+  <div id="copy-toast" class="fixed top-4 left-1/2 -translate-x-1/2 bg-emerald-700 text-white px-5 py-1.5 rounded-full text-sm font-bold shadow-lg hidden z-50">
+    تم نسخ نص البرومبت بنجاح!
+  </div>
+
+  <!-- 1. قسم المعاينة الحية للتصميم -->
+  <section class="mb-5">
+    <div class="flex items-center justify-between mb-1.5 px-1">
+      <h2 class="text-base font-bold text-[#1a365d]">1. المعاينة الحية للتصميم الفعلي (كما سيظهر في التطبيق والطباعة):</h2>
+      <span class="text-xs bg-emerald-100 text-emerald-800 font-bold px-2.5 py-0.5 rounded-full">معاينة تفاعلية</span>
+    </div>
+
+    <!-- حاوية المعاينة -->
+    <div class="bg-white border-2 border-[#1a365d] rounded-lg p-2 shadow-md">
+      <!-- الترويسة المقلصة -->
+      <div class="flex items-center justify-between border-b border-[#1a365d] pb-0.5 mb-1 px-1">
+        <div class="text-right leading-none flex items-baseline gap-1.5">
+          <span class="text-xs sm:text-sm font-bold text-[#1a365d]">بقالة العزي</span>
+          <span class="text-[10px] font-bold text-slate-700" dir="ltr">ت: 776425052</span>
+        </div>
+        <div class="w-5 h-5 rounded-full bg-[#1a365d] text-white flex items-center justify-center font-bold text-[10px]" dir="ltr">AZ</div>
+        <div class="text-left leading-none flex items-baseline gap-1.5">
+          <span class="text-xs font-bold text-[#1a365d]">للتجارة العامة</span>
+          <span class="text-[10px] font-bold text-slate-700" dir="ltr">776425052</span>
+        </div>
+      </div>
+
+      <!-- شريط العميل والتاريخ المقلص -->
+      <div class="flex flex-wrap items-center justify-between gap-1 text-[11px] mb-1 pb-1 border-b border-dotted border-[#1a365d]">
+        <div class="flex items-center gap-1 flex-1 min-w-[140px]">
+          <span class="font-bold">المطلوب من الأخ/</span>
+          <input type="text" value="عميل تجريبي" class="border-b border-dotted border-[#1a365d] bg-transparent outline-none font-bold text-[11px] px-1 w-full" />
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="bg-[#1a365d] text-white font-bold px-1.5 rounded text-[10px]">فاتورة بيع</span>
+          <label class="font-bold text-[10px] flex items-center gap-0.5"><input type="radio" checked name="demoPay" class="accent-[#1a365d]" /> نقداً</label>
+          <label class="font-bold text-[10px] flex items-center gap-0.5"><input type="radio" name="demoPay" class="accent-[#1a365d]" /> آجل</label>
+        </div>
+        <div class="flex items-center gap-1.5">
+          <span class="font-bold text-[10px]">التاريخ: <span dir="ltr">2026-11-25</span></span>
+          <span class="font-bold text-[10px]">الرقم: <span dir="ltr" class="text-red-700 border border-[#1a365d] px-1 rounded">0953</span></span>
+        </div>
+      </div>
+
+      <!-- الجدول الموحد (يبدأ بصف واحد ويتمدد تلقائياً) -->
+      <table class="w-full border-collapse border-2 border-[#1a365d] text-center text-xs table-fixed">
+        <thead>
+          <tr class="bg-[#1a365d] text-white font-bold">
+            <th class="border-l border-white/30 py-1 w-[24%]">القيمة الإجمالية</th>
+            <th class="border-l border-white/30 py-1 w-[16%]">العدد</th>
+            <th class="border-l border-white/30 py-1 w-[51%]">التفاصيـــــــــل</th>
+            <th class="py-1 w-[9%]">م</th>
+          </tr>
+        </thead>
+        <tbody id="preview-tbody">
+          <tr class="border-b border-[#1a365d]">
+            <td class="border-l border-[#1a365d] p-0.5"><input type="text" dir="ltr" placeholder="0" oninput="handleDemoInput(this)" class="w-full bg-transparent outline-none text-center font-bold text-[#1a365d]" /></td>
+            <td class="border-l border-[#1a365d] p-0.5"><input type="text" dir="ltr" placeholder="-" oninput="handleDemoInput(this)" class="w-full bg-transparent outline-none text-center font-bold" /></td>
+            <td class="border-l border-[#1a365d] p-0.5"><input type="text" placeholder="اكتب هنا لتجربة التمدد التلقائي..." oninput="handleDemoInput(this)" class="w-full bg-transparent outline-none text-right pr-1 font-bold" /></td>
+            <td dir="ltr" class="p-1 font-bold text-slate-500">1</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- الإجمالي والتذييل -->
+      <div class="grid grid-cols-2 border-x-2 border-b-2 border-[#1a365d] bg-slate-50 font-bold text-xs p-1">
+        <div class="border-l-2 border-[#1a365d] pl-2 flex justify-between">
+          <span>الإجمالي الكلي:</span>
+          <span id="demo-total" dir="ltr" class="text-red-700 text-sm">0</span>
+        </div>
+        <div class="pr-2 flex justify-between">
+          <span>عدد الأصناف:</span>
+          <span id="demo-count" dir="ltr">0</span>
+        </div>
+      </div>
+      <div class="text-center text-[11px] font-bold text-[#1a365d] mt-1">
+        البضاعة المباعة لا ترد ولا تستبدل بعد خروجها من المحل.
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. قسم نص البرومبت الكامل للمراجعة -->
+  <section>
+    <div class="flex items-center justify-between mb-1.5 px-1">
+      <h2 class="text-base font-bold text-[#1a365d]">2. نص البرومبت الكامل الجاهز للإدخال في AI Studio:</h2>
+      <span class="text-xs text-slate-600 font-bold">محدّث بجميع التنبيهات</span>
+    </div>
+
+    <div class="bg-slate-900 text-slate-100 rounded-lg p-3 sm:p-4 shadow-inner border border-slate-700 overflow-x-auto">
+      <pre id="prompt-content" dir="ltr" class="prompt-code-box text-left text-xs sm:text-sm text-emerald-300">Create a complete, single-file Android-ready Progressive Web App (PWA) for a retail sales invoice system (بقالة العزي - Al-Ezzi Grocery) built with HTML5, Tailwind CSS, and Vanilla JavaScript, designed to be wrapped into a real Android APK (via PWABuilder / WebView / Capacitor).
+
+1. Global Typography, RTL Direction & English Numerals (CRITICAL):
+- Font Family: Load and apply Amiri (الخط الأميري) from Google Fonts globally across the entire application (* { font-family: 'Amiri', serif !important; }), including all headers, inputs, tables, buttons, and print views.
+- Arabic UI with Strict RTL Layout: Keep the entire interface, labels, headers, and table columns in Arabic with right-to-left direction (&lt;html lang="ar" dir="rtl"&gt;). Never reverse or mirror the layout to LTR.
+- English Numerals Only (0-9): Enforce Western/English numerals (0123456789) across every single part of the app—including invoice numbers, dates (YYYY-MM-DD), phone numbers, quantities, prices, totals, row numbers, and saved history. Automatically convert any typed Arabic/Hindi digits (٠-٩) into English digits (0-9) on input.
+
+2. Screen UI: Unified Single-Page Invoice (Ultra-Compact Header & Seamless Layout):
+- Unified Seamless Container: Design the entire page as one cohesive, unified invoice sheet (#1a365d navy blue borders on crisp white background) without splitting or cropping the page into separate side-by-side columns.
+- Ultra-Compact Top Header (3-Column Split - Minimal Height & Tight Padding):
+  * Keep the header sleek and ultra-compact (max height ~28px–38px, tight line-height 1.0, compact font sizes 9px–13px) so maximum screen space is dedicated to the invoice items:
+  * Right Side (Arabic): Title: بقالة العزي (Bold) | Contact: ت: 776425052 (dir="ltr" for English numerals).
+  * Center (Compact Logo): Tiny circular emblem (22px x 22px) in #1a365d containing "AZ" in bold white text in the center.
+  * Left Side: Subtitle: للتجارة العامة | Contact: 776425052 (dir="ltr" for English numerals).
+- Ultra-Compact Invoice Meta Bar (Single Line):
+  * Minimize height and padding of the customer/date bar into one tight single row:
+  * Right: المطلوب من الأخ/ + compact text input for customer name.
+  * Center: Badge فاتورة بيع + radio toggles for نقداً (Cash) and آجل (Credit).
+  * Left: التاريخ: (YYYY-MM-DD in English digits) and الرقم: (auto-incrementing invoice number in red English digits, e.g., 0953).
+
+3. Dynamic Single-Row Expanding Table:
+- Starts with 1 Row Only: Initialize the unified items table with only 1 empty row containing 4 RTL columns ordered from right to left:
+  1) القيمة الإجمالية (Total Amount, width ~24%) on the far right
+  2) العدد (Quantity, width ~16%) next to it
+  3) التفاصيـــــــــل (Item Description, width ~51%) next to it
+  4) م (Row index in English digits 1, 2, 3..., width ~9%) on the far left
+- Auto-Row Creation: As soon as the user types any text or number into the last row, automatically append a new blank row underneath it so the user never runs out of rows and no unused space is wasted.
+- Live Calculation & Footer: Auto-calculate الإجمالي الكلي (Grand Total) and عدد الأصناف (Items Count) in real time using English numerals. Include the footer notice: البضاعة المباعة لا ترد ولا تستبدل بعد خروجها من المحل. along with توقيع البائع and توقيع المشتري.
+
+4. Print Screen As-Is (Exact WYSIWYG Printing):
+- Direct Screen Printing: When clicking طباعة (Print), print the exact screen invoice as it appears (@media print), preserving the unified RTL design, Amiri font, colors/borders, and English numerals.
+- Automatically hide UI toolbars, modals, and any trailing empty/unfilled table row during printing so the printed receipt is clean, sharp, and wastes zero paper.
+
+5. Android App Wrapping & Offline Features:
+- Include an embedded Web App Manifest (manifest.json via Data URI with AZ icon, display: "standalone", theme_color: "#1a365d") so it installs and wraps cleanly as an Android app.
+- Provide a compact fixed bottom action bar (no-print) with 4 Arabic buttons: جديد (New), حفظ (Save), السجل (History), and طباعة (Print).</pre>
+    </div>
+  </section>
+
+  <script>
+    function toEnglishDigits(str) {
+      return String(str || '')
+        .replace(/[٠-٩]/g, d => '0123456789'['٠١٢٣٤٥٦٧٨٩'.indexOf(d)])
+        .replace(/[۰-۹]/g, d => '0123456789'['۰۱۲۳۴۵۶۷۸۹'.indexOf(d)]);
+    }
+
+    function handleDemoInput(el) {
+      el.value = toEnglishDigits(el.value);
+      const tbody = document.getElementById('preview-tbody');
+      const tr = el.closest('tr');
+      const inputs = tr.querySelectorAll('input');
+      const hasValue = Array.from(inputs).some(i => i.value.trim() !== '');
+
+      if (hasValue && tr === tbody.lastElementChild) {
+        const nextIdx = tbody.children.length + 1;
+        const newTr = document.createElement('tr');
+        newTr.className = 'border-b border-[#1a365d]';
+        newTr.innerHTML = `
+          <td class="border-l border-[#1a365d] p-0.5"><input type="text" dir="ltr" placeholder="0" oninput="handleDemoInput(this)" class="w-full bg-transparent outline-none text-center font-bold text-[#1a365d]" /></td>
+          <td class="border-l border-[#1a365d] p-0.5"><input type="text" dir="ltr" placeholder="-" oninput="handleDemoInput(this)" class="w-full bg-transparent outline-none text-center font-bold" /></td>
+          <td class="border-l border-[#1a365d] p-0.5"><input type="text" placeholder="اكتب اسم الصنف..." oninput="handleDemoInput(this)" class="w-full bg-transparent outline-none text-right pr-1 font-bold" /></td>
+          <td dir="ltr" class="p-1 font-bold text-slate-500">${nextIdx}</td>
+        `;
+        tbody.appendChild(newTr);
+      }
+
+      // حساب الإجمالي للمعاينة
+      let sum = 0;
+      let count = 0;
+      tbody.querySelectorAll('tr').forEach(row => {
+        const rowInputs = row.querySelectorAll('input');
+        const val = parseFloat(toEnglishDigits(rowInputs[0].value.trim())) || 0;
+        const qty = rowInputs[1].value.trim();
+        const desc = rowInputs[2].value.trim();
+        if (desc || qty || val > 0) {
+          count++;
+          sum += val;
+        }
+      });
+      document.getElementById('demo-total').textContent = sum.toLocaleString('en-US');
+      document.getElementById('demo-count').textContent = String(count);
+    }
+
+    function copyPromptText() {
+      const text = document.getElementById('prompt-content').innerText;
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+
+      const toast = document.getElementById('copy-toast');
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 2500);
+    }
+  </script>
+</body>
+</html>

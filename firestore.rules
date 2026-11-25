@@ -1,0 +1,219 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTierItem(tier) {
+      return tier is map &&
+             tier.keys().hasAll(['name', 'factorToPrevious']) &&
+             tier.keys().hasOnly(['name', 'factorToPrevious']) &&
+             tier.name is string && tier.name.size() >= 1 && tier.name.size() <= 40 &&
+             tier.factorToPrevious is number && tier.factorToPrevious > 0;
+    }
+
+    function isValidProduct(data, userId) {
+      return data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.barcode is string && data.barcode.size() <= 64 &&
+             data.baseUnitName is string && data.baseUnitName.size() >= 1 && data.baseUnitName.size() <= 40 &&
+             data.defaultUnitName is string && data.defaultUnitName.size() >= 1 && data.defaultUnitName.size() <= 40 &&
+             data.unitTiers is list && data.unitTiers.size() <= 5 &&
+             (data.unitTiers.size() == 0 || isValidTierItem(data.unitTiers[0])) &&
+             data.baseCost is number && data.baseCost >= 0 &&
+             data.baseSellPrice is number && data.baseSellPrice >= 0 &&
+             data.stockBaseQty is number && data.stockBaseQty >= 0 &&
+             data.trackExpiry is bool &&
+             data.expiryDate is string && data.expiryDate.size() <= 20 &&
+             data.minStockAlert is number && data.minStockAlert >= 0 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidContact(data, userId) {
+      return data.userId == userId &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+             data.contactType in ['CUSTOMER', 'SUPPLIER'] &&
+             data.phone is string && data.phone.size() <= 30 &&
+             data.balance is number &&
+             data.notes is string && data.notes.size() <= 300 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidInvoiceLine(line) {
+      return line is map &&
+             line.keys().hasAll([
+               'productId', 'productName', 'unitName',
+               'cumulativeFactor', 'unitQty', 'unitPrice', 'baseQty', 'lineTotal'
+             ]) &&
+             line.keys().hasOnly([
+               'productId', 'productName', 'unitName',
+               'cumulativeFactor', 'unitQty', 'unitPrice', 'baseQty', 'lineTotal'
+             ]) &&
+             isValidId(line.productId) &&
+             line.productName is string && line.productName.size() >= 1 && line.productName.size() <= 120 &&
+             line.unitName is string && line.unitName.size() >= 1 && line.unitName.size() <= 40 &&
+             line.cumulativeFactor is number && line.cumulativeFactor > 0 &&
+             line.unitQty is number && line.unitQty > 0 &&
+             line.unitPrice is number && line.unitPrice >= 0 &&
+             line.baseQty is number && line.baseQty > 0 &&
+             line.lineTotal is number && line.lineTotal >= 0;
+    }
+
+    function isValidInvoice(data, userId) {
+      return data.userId == userId &&
+             data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 40 &&
+             data.invoiceType in ['PURCHASE', 'SALE'] &&
+             data.paymentMethod in ['CASH', 'CREDIT'] &&
+             data.contactId is string && data.contactId.size() <= 128 &&
+             data.contactName is string && data.contactName.size() <= 120 &&
+             data.totalAmount is number && data.totalAmount >= 0 &&
+             data.lines is list && data.lines.size() >= 1 && data.lines.size() <= 50 &&
+             isValidInvoiceLine(data.lines[0]) &&
+             data.notes is string && data.notes.size() <= 300 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidPayment(data, userId) {
+      return data.userId == userId &&
+             isValidId(data.contactId) &&
+             data.contactName is string && data.contactName.size() >= 1 && data.contactName.size() <= 120 &&
+             data.contactType in ['CUSTOMER', 'SUPPLIER'] &&
+             data.amount is number && data.amount > 0 &&
+             data.notes is string && data.notes.size() <= 300 &&
+             data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /users/{userId} {
+      match /products/{productId} {
+        allow get: if isOwner(userId) && isValidId(productId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(productId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'name', 'barcode', 'baseUnitName', 'defaultUnitName',
+                           'unitTiers', 'baseCost', 'baseSellPrice', 'stockBaseQty',
+                           'trackExpiry', 'expiryDate', 'minStockAlert', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'name', 'barcode', 'baseUnitName', 'defaultUnitName',
+                           'unitTiers', 'baseCost', 'baseSellPrice', 'stockBaseQty',
+                           'trackExpiry', 'expiryDate', 'minStockAlert', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidProduct(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(productId) &&
+                         isValidProduct(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'name', 'barcode', 'baseUnitName', 'defaultUnitName',
+                           'unitTiers', 'baseCost', 'baseSellPrice', 'stockBaseQty',
+                           'trackExpiry', 'expiryDate', 'minStockAlert', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(productId);
+      }
+
+      match /contacts/{contactId} {
+        allow get: if isOwner(userId) && isValidId(contactId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(contactId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'name', 'contactType', 'phone', 'balance', 'notes', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'name', 'contactType', 'phone', 'balance', 'notes', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidContact(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(contactId) &&
+                         isValidContact(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'name', 'contactType', 'phone', 'balance', 'notes', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(contactId);
+      }
+
+      match /invoices/{invoiceId} {
+        allow get: if isOwner(userId) && isValidId(invoiceId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(invoiceId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'invoiceNumber', 'invoiceType', 'paymentMethod',
+                           'contactId', 'contactName', 'totalAmount', 'lines', 'notes',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'invoiceNumber', 'invoiceType', 'paymentMethod',
+                           'contactId', 'contactName', 'totalAmount', 'lines', 'notes',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidInvoice(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(invoiceId) &&
+                         isValidInvoice(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'invoiceNumber', 'invoiceType', 'paymentMethod',
+                           'contactId', 'contactName', 'totalAmount', 'lines', 'notes', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(invoiceId);
+      }
+
+      match /payments/{paymentId} {
+        allow get: if isOwner(userId) && isValidId(paymentId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(paymentId) &&
+                         incoming().keys().hasAll([
+                           'userId', 'contactId', 'contactName', 'contactType',
+                           'amount', 'notes', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'contactId', 'contactName', 'contactType',
+                           'amount', 'notes', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidPayment(incoming(), userId);
+        allow update: if isOwner(userId) &&
+                         isValidId(paymentId) &&
+                         isValidPayment(incoming(), userId) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'contactId', 'contactName', 'contactType', 'amount', 'notes', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(paymentId);
+      }
+    }
+  }
+}
