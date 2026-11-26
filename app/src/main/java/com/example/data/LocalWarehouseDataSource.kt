@@ -887,7 +887,7 @@ object BackupJsonCodec {
                     userId = obj.optString("userId", ""),
                     invoiceNumber = obj.optString("invoiceNumber", ""),
                     invoiceType = obj.optString("invoiceType", InvoiceType.SALE.name),
-                    invoiceMode = obj.optString("invoiceMode", InvoiceMode.STOCK.name),
+                    invoiceMode = obj.optString("invoiceMode", ""),
                     paymentMethod = obj.optString("paymentMethod", PaymentMethod.CASH.name),
                     contactId = obj.optString("contactId", ""),
                     contactName = obj.optString("contactName", ""),
