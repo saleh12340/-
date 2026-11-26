@@ -14,7 +14,10 @@ data class InvoiceDraftLine(
     val productId: String,
     val unitName: String,
     val unitQty: Double,
-    val unitPrice: Double
+    val unitPrice: Double,
+    // Present only for a not-yet-committed purchase item or a free-sale line.
+    // It is transient UI payload and is never serialized into the invoice document.
+    val draftProduct: Product? = null
 )
 
 data class BackupBundle(
