@@ -107,6 +107,7 @@ import com.example.domain.ContactType
 import com.example.domain.Invoice
 import com.example.domain.InvoiceLine
 import com.example.domain.InvoiceType
+import com.example.domain.InvoiceMode
 import com.example.domain.NumberFormatUtils
 import com.example.domain.PaymentMethod
 import com.example.domain.Product
@@ -202,6 +203,7 @@ fun InvoicesScreen(
     }
 
     var invoiceType by remember { mutableStateOf(InvoiceType.SALE) }
+    var invoiceMode by remember { mutableStateOf(InvoiceMode.STOCK) }
     var paymentMethod by remember { mutableStateOf(PaymentMethod.CASH) }
     var selectedContact by remember { mutableStateOf<Contact?>(null) }
     var manualCustomerName by remember { mutableStateOf("") }
@@ -247,8 +249,8 @@ fun InvoicesScreen(
         )
     }
 
-    val productSuggestions = remember(draftSearchQuery, products, invoiceType) {
-        SmartSuggestionEngine.suggestProducts(
+    val productSuggestions = remember(draftSearchQuery, products, invoiceType, invoiceMode) {
+        if (invoiceMode == InvoiceMode.FREE) emptyList() else SmartSuggestionEngine.suggestProducts(
             query = draftSearchQuery,
             products = products,
             invoiceType = invoiceType,
@@ -282,12 +284,14 @@ fun InvoicesScreen(
         unitPickerLineKey = null
         localError = null
         paymentMethod = PaymentMethod.CASH
+        invoiceMode = InvoiceMode.STOCK
     }
 
     fun loadInvoiceForEdit(invoice: Invoice) {
         resetDraft()
         editingInvoice = invoice
         invoiceType = invoice.resolvedType
+        invoiceMode = invoice.resolvedMode
         paymentMethod = invoice.resolvedPaymentMethod
         customInvoiceNumber = invoice.invoiceNumber
         notes = invoice.notes
@@ -345,6 +349,10 @@ fun InvoicesScreen(
     }
 
     fun addProductFromSuggestion(prod: Product, unitName: String, factor: Double) {
+        if (invoiceMode == InvoiceMode.FREE) {
+            localError = "الفاتورة الحرة تقبل الأصناف اليدوية فقط؛ استخدم خيار إضافة صنف حر"
+            return
+        }
         val dupLine = draftLines.any {
             it.product.id == prod.id && it.unitName.equals(unitName, ignoreCase = true)
         }
@@ -401,6 +409,7 @@ fun InvoicesScreen(
                 id = editingInvoice?.id ?: "draft_preview",
                 invoiceNumber = displayInvoiceNumber,
                 invoiceType = invoiceType.name,
+                invoiceMode = invoiceMode.name,
                 paymentMethod = paymentMethod.name,
                 contactId = selectedContact?.id ?: "",
                 contactName = resolvedName,
@@ -849,6 +858,25 @@ fun InvoicesScreen(
                                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
                                     )
                                 }
+
+                                FilterChip(
+                                    selected = invoiceMode == InvoiceMode.STOCK,
+                                    onClick = {
+                                        if (draftLines.isEmpty()) invoiceMode = InvoiceMode.STOCK
+                                        else localError = "ابدأ فاتورة جديدة قبل تغيير نوعها"
+                                    },
+                                    label = { Text("من المخزن") },
+                                    modifier = Modifier.testTag("invoice_mode_stock")
+                                )
+                                FilterChip(
+                                    selected = invoiceMode == InvoiceMode.FREE,
+                                    onClick = {
+                                        if (draftLines.isEmpty()) invoiceMode = InvoiceMode.FREE
+                                        else localError = "ابدأ فاتورة جديدة قبل تغيير نوعها"
+                                    },
+                                    label = { Text("فاتورة حرة") },
+                                    modifier = Modifier.testTag("invoice_mode_free")
+                                )
 
                                 RadioOption(
                                     label = "نقداً",
@@ -1370,7 +1398,10 @@ fun InvoicesScreen(
                                             modifier = Modifier
                                                 .size(24.dp)
                                                 .clip(CircleShape)
-                                                .clickable { showAddLineDialog = true }
+                                                .clickable {
+                                                    if (invoiceMode == InvoiceMode.FREE) showQuickWholesaleDialog = true
+                                                    else showAddLineDialog = true
+                                                }
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Filled.Search,
@@ -1404,13 +1435,14 @@ fun InvoicesScreen(
                             // Smart Product Autocomplete Suggestions directly below active row (never steals focus)
                             AnimatedVisibility(
                                 visible = (isProductInputFocused || draftSearchQuery.isNotBlank()) &&
-                                    (products.isNotEmpty() || onQuickCreateProduct != null)
+                                    ((invoiceMode == InvoiceMode.STOCK && products.isNotEmpty()) ||
+                                        (invoiceMode == InvoiceMode.FREE && onQuickCreateProduct != null))
                             ) {
                                 SmartProductSuggestionsPanel(
                                     invoiceType = invoiceType,
                                     query = draftSearchQuery,
                                     suggestions = productSuggestions,
-                                    canQuickCreate = onQuickCreateProduct != null,
+                                    canQuickCreate = invoiceMode == InvoiceMode.FREE && onQuickCreateProduct != null,
                                     onPickUnit = { prod, unitName, factor ->
                                         addProductFromSuggestion(prod, unitName, factor)
                                     },
@@ -1602,7 +1634,8 @@ fun InvoicesScreen(
                                     unitName = it.unitName,
                                     unitQty = it.unitQty,
                                     unitPrice = it.unitPrice,
-                                    draftProduct = it.product.takeIf { product -> product.id.startsWith("draft_") || product.id.startsWith("free_") }
+                                    draftProduct = it.product.takeIf { product -> product.id.startsWith("draft_") || product.id.startsWith("free_") },
+                                    invoiceMode = invoiceMode
                                 )
                             }
                             val resolvedContactId = selectedContact?.id ?: ""
@@ -2916,6 +2949,17 @@ private fun InvoiceHistoryContent(
                                                     color = Color.White,
                                                     maxLines = 1,
                                                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                            Surface(
+                                                color = if (invoice.resolvedMode == InvoiceMode.FREE) LedgerGold else LedgerNavy.copy(alpha = 0.08f),
+                                                shape = RoundedCornerShape(6.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (invoice.resolvedMode == InvoiceMode.FREE) "حرة" else "مخزن",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = LedgerNavy,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
                                             }
                                             Text(
