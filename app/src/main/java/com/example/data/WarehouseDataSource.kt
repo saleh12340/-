@@ -4,6 +4,7 @@ import com.example.domain.Contact
 import com.example.domain.ContactType
 import com.example.domain.Invoice
 import com.example.domain.InvoiceType
+import com.example.domain.InvoiceMode
 import com.example.domain.Payment
 import com.example.domain.PaymentMethod
 import com.example.domain.Product
@@ -17,7 +18,8 @@ data class InvoiceDraftLine(
     val unitPrice: Double,
     // Present only for a not-yet-committed purchase item or a free-sale line.
     // It is transient UI payload and is never serialized into the invoice document.
-    val draftProduct: Product? = null
+    val draftProduct: Product? = null,
+    val invoiceMode: InvoiceMode = InvoiceMode.STOCK
 )
 
 data class BackupBundle(
