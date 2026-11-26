@@ -860,22 +860,16 @@ fun InvoicesScreen(
                                 }
 
                                 FilterChip(
-                                    selected = invoiceMode == InvoiceMode.STOCK,
-                                    onClick = {
-                                        if (draftLines.isEmpty()) invoiceMode = InvoiceMode.STOCK
-                                        else localError = "ابدأ فاتورة جديدة قبل تغيير نوعها"
-                                    },
-                                    label = { Text("من المخزن") },
-                                    modifier = Modifier.testTag("invoice_mode_stock")
-                                )
-                                FilterChip(
                                     selected = invoiceMode == InvoiceMode.FREE,
                                     onClick = {
-                                        if (draftLines.isEmpty()) invoiceMode = InvoiceMode.FREE
-                                        else localError = "ابدأ فاتورة جديدة قبل تغيير نوعها"
+                                        if (draftLines.isEmpty()) {
+                                            invoiceMode = if (invoiceMode == InvoiceMode.FREE) InvoiceMode.STOCK else InvoiceMode.FREE
+                                        } else {
+                                            localError = "ابدأ فاتورة جديدة قبل تغيير نوعها"
+                                        }
                                     },
-                                    label = { Text("فاتورة حرة") },
-                                    modifier = Modifier.testTag("invoice_mode_free")
+                                    label = { Text(if (invoiceMode == InvoiceMode.FREE) "فاتورة حرة" else "من المخزن") },
+                                    modifier = Modifier.testTag("toggle_invoice_mode")
                                 )
 
                                 RadioOption(
