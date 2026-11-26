@@ -310,7 +310,7 @@ class WarehouseViewModel(
 
         // Keep the product transient until the purchase invoice is committed.
         // A sale invoice may also use this object as a free line, but must never persist it.
-        Result.success(
+        return Result.success(
             Product(
                 id = "draft_${java.util.UUID.randomUUID().toString().replace("-", "")}",
                 userId = currentUserId,
