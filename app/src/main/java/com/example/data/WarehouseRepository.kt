@@ -419,122 +419,152 @@ class WarehouseRepository(
                 if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
             }.take(120)
 
+            val newPurchaseRefs = draftLines
+                .filter { invoiceType == InvoiceType.PURCHASE && it.draftProduct != null }
+                .associate { it.draftProduct!!.id to userDoc(uid).collection("products").document() }
+
             val createdInvoice = db.runTransaction { tx ->
-                val productSnapshots = draftLines.map { it.productId }.distinct().associateWith { pid ->
+                // Read every existing product and contact before performing any write.
+                val existingIds = draftLines
+                    .filter { it.draftProduct == null && it.productId.isNotBlank() }
+                    .map { it.productId }.distinct()
+                val productSnapshots = existingIds.associateWith { pid ->
                     val ref = userDoc(uid).collection("products").document(pid)
-                    val snap = tx.get(ref)
-                    val prod = snap.toObject(Product::class.java)
+                    val prod = tx.get(ref).toObject(Product::class.java)
                         ?: throw IllegalStateException("الصنف غير موجود في المخزون")
                     ref to prod
-                }.toMutableMap()
-
+                }
                 val contactPair = if (paymentMethod == PaymentMethod.CREDIT && contactId.isNotBlank()) {
                     val cRef = userDoc(uid).collection("contacts").document(contactId)
-                    val cSnap = tx.get(cRef)
-                    val c = cSnap.toObject(Contact::class.java)
+                    val c = tx.get(cRef).toObject(Contact::class.java)
                         ?: throw IllegalStateException("الحساب المحدد غير موجود")
                     cRef to c
                 } else null
 
                 val finalLines = mutableListOf<InvoiceLine>()
                 val productUpdates = mutableMapOf<String, Pair<Double, Double>>()
+                val productRefs = mutableMapOf<String, com.google.firebase.firestore.DocumentReference>()
+                val originalProducts = mutableMapOf<String, Product>()
                 var grandTotal = 0.0
 
                 for (draft in draftLines) {
-                    val (_, currentProd) = productSnapshots[draft.productId]
-                        ?: throw IllegalStateException("الصنف غير موجود")
-                    val runningTuple = productUpdates[draft.productId]
-                    val effectiveProd = if (runningTuple != null) {
-                        currentProd.copy(stockBaseQty = runningTuple.first, baseCost = runningTuple.second)
-                    } else currentProd
+                    require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
+                    require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
 
+                    // A free sale is a snapshot line stored only in the invoice.
+                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
+                        val source = draft.draftProduct
+                        val factor = UnitCostEngine.getAvailableUnits(source)
+                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
+                            ?.cumulativeFactor ?: 1.0
+                        val line = InvoiceLine(
+                            productId = "", productName = source.name, unitName = draft.unitName,
+                            cumulativeFactor = factor, unitQty = draft.unitQty, unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor, lineTotal = draft.unitQty * draft.unitPrice
+                        )
+                        finalLines.add(line)
+                        grandTotal += line.lineTotal
+                        continue
+                    }
+
+                    val currentProd: Product
+                    val productId: String
+                    if (invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
+                        val source = draft.draftProduct
+                        val ref = newPurchaseRefs[source.id]
+                            ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
+                        productId = ref.id
+                        productRefs[productId] = ref
+                        val base = originalProducts.getOrPut(productId) {
+                            source.copy(id = productId, userId = uid, stockBaseQty = 0.0)
+                        }
+                        currentProd = base
+                    } else {
+                        productId = draft.productId
+                        val pair = productSnapshots[productId]
+                            ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                        productRefs[productId] = pair.first
+                        originalProducts[productId] = pair.second
+                        currentProd = pair.second
+                    }
+
+                    val running = productUpdates[productId]
+                    val effectiveProd = if (running != null) {
+                        currentProd.copy(stockBaseQty = running.first, baseCost = running.second)
+                    } else currentProd
                     if (invoiceType == InvoiceType.PURCHASE) {
                         val computed = UnitCostEngine.computePurchaseLine(
-                            product = effectiveProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            unitPrice = draft.unitPrice
+                            product = effectiveProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
+                        finalLines.add(computed.line.copy(productId = productId))
                         grandTotal += computed.line.lineTotal
-                        productUpdates[draft.productId] = computed.newStockBaseQty to computed.updatedBaseCost
+                        productUpdates[productId] = computed.newStockBaseQty to computed.updatedBaseCost
                     } else {
                         val computed = UnitCostEngine.computeSaleLine(
-                            product = effectiveProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            customUnitPrice = draft.unitPrice
+                            product = effectiveProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, customUnitPrice = draft.unitPrice
                         ).getOrThrow()
                         finalLines.add(computed.line)
                         grandTotal += computed.line.lineTotal
-                        productUpdates[draft.productId] = computed.newStockBaseQty to effectiveProd.baseCost
+                        productUpdates[productId] = computed.newStockBaseQty to effectiveProd.baseCost
                     }
                 }
 
                 val serializedLines = finalLines.map { line ->
                     mapOf(
-                        "productId" to line.productId,
-                        "productName" to line.productName,
-                        "unitName" to line.unitName,
-                        "cumulativeFactor" to line.cumulativeFactor,
-                        "unitQty" to line.unitQty,
-                        "unitPrice" to line.unitPrice,
-                        "baseQty" to line.baseQty,
-                        "lineTotal" to line.lineTotal
+                        "productId" to line.productId, "productName" to line.productName,
+                        "unitName" to line.unitName, "cumulativeFactor" to line.cumulativeFactor,
+                        "unitQty" to line.unitQty, "unitPrice" to line.unitPrice,
+                        "baseQty" to line.baseQty, "lineTotal" to line.lineTotal
                     )
                 }
-
-                val invoicePayload = mapOf(
-                    "userId" to uid,
-                    "invoiceNumber" to cleanNumber.take(40),
-                    "invoiceType" to invoiceType.name,
-                    "paymentMethod" to paymentMethod.name,
-                    "contactId" to contactId.trim(),
-                    "contactName" to resolvedContactName,
-                    "totalAmount" to grandTotal,
-                    "lines" to serializedLines,
+                tx.set(invoiceDocRef, mapOf(
+                    "userId" to uid, "invoiceNumber" to cleanNumber.take(40),
+                    "invoiceType" to invoiceType.name, "paymentMethod" to paymentMethod.name,
+                    "contactId" to contactId.trim(), "contactName" to resolvedContactName,
+                    "totalAmount" to grandTotal, "lines" to serializedLines,
                     "notes" to notes.trim().take(300),
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                tx.set(invoiceDocRef, invoicePayload)
+                    "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
+                ))
 
                 for ((pid, tuple) in productUpdates) {
-                    val (ref, origProd) = productSnapshots.getValue(pid)
-                    val updates = mutableMapOf<String, Any>(
-                        "stockBaseQty" to tuple.first,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                    if (invoiceType == InvoiceType.PURCHASE && tuple.second != origProd.baseCost) {
-                        updates["baseCost"] = tuple.second
+                    val ref = productRefs.getValue(pid)
+                    val original = originalProducts.getValue(pid)
+                    if (pid in newPurchaseRefs.values.map { it.id }) {
+                        tx.set(ref, mapOf(
+                            "userId" to uid, "name" to original.name.trim(), "barcode" to original.barcode.trim(),
+                            "baseUnitName" to original.baseUnitName, "defaultUnitName" to original.defaultUnitName,
+                            "unitTiers" to original.unitTiers, "baseCost" to tuple.second,
+                            "baseSellPrice" to original.baseSellPrice, "stockBaseQty" to tuple.first,
+                            "trackExpiry" to original.trackExpiry, "expiryDate" to original.expiryDate,
+                            "minStockAlert" to original.minStockAlert,
+                            "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
+                        ))
+                    } else {
+                        val updates = mutableMapOf<String, Any>(
+                            "stockBaseQty" to tuple.first, "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                        if (invoiceType == InvoiceType.PURCHASE && tuple.second != original.baseCost) {
+                            updates["baseCost"] = tuple.second
+                        }
+                        tx.update(ref, updates)
                     }
-                    tx.update(ref, updates)
                 }
-
                 if (contactPair != null) {
                     val (cRef, contact) = contactPair
-                    tx.update(
-                        cRef,
-                        mapOf(
-                            "balance" to (contact.balance + grandTotal),
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    )
+                    tx.update(cRef, mapOf(
+                        "balance" to (contact.balance + grandTotal),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ))
                 }
-
                 Invoice(
-                    id = invoiceDocRef.id,
-                    userId = uid,
-                    invoiceNumber = cleanNumber.take(40),
-                    invoiceType = invoiceType.name,
-                    paymentMethod = paymentMethod.name,
-                    contactId = contactId.trim(),
-                    contactName = resolvedContactName,
-                    totalAmount = grandTotal,
-                    lines = finalLines,
-                    notes = notes.trim().take(300)
+                    id = invoiceDocRef.id, userId = uid, invoiceNumber = cleanNumber.take(40),
+                    invoiceType = invoiceType.name, paymentMethod = paymentMethod.name,
+                    contactId = contactId.trim(), contactName = resolvedContactName,
+                    totalAmount = grandTotal, lines = finalLines, notes = notes.trim().take(300)
                 )
-            }.await()
+            }.await())
 
             Result.success(createdInvoice)
         } catch (e: CancellationException) {
