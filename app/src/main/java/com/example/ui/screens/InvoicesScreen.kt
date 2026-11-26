@@ -2730,7 +2730,8 @@ private fun InvoiceLinePickerDialog(
                         errorMsg = "السعر لا يمكن أن يكون سالبًا"
                         return@Button
                     }
-                    if (invoiceType == InvoiceType.SALE) {
+                    if (invoiceType == InvoiceType.SALE &&
+                        !prod.id.startsWith("draft_") && !prod.id.startsWith("free_")) {
                         val effectiveProd = prod.copy(stockBaseQty = availableStockForProduct(prod))
                         val check = UnitCostEngine.computeSaleLine(effectiveProd, unit.name, parsedQty, parsedPrice)
                         if (check.isFailure) {
