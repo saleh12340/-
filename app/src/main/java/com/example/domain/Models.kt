@@ -118,11 +118,14 @@ data class Invoice(
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null,
     // Defaults to STOCK so invoices saved before this field was introduced remain compatible.
-    val invoiceMode: String = InvoiceMode.STOCK.name
+    val invoiceMode: String = ""
 ) {
     val resolvedType: InvoiceType get() = InvoiceType.fromRaw(invoiceType)
     val resolvedPaymentMethod: PaymentMethod get() = PaymentMethod.fromRaw(paymentMethod)
-    val resolvedMode: InvoiceMode get() = InvoiceMode.fromRaw(invoiceMode)
+    // Older free-sale invoices had no mode field but stored invoice-only lines with an empty productId.
+    val resolvedMode: InvoiceMode get() = if (invoiceMode.isBlank()) {
+        if (lines.any { it.productId.isBlank() }) InvoiceMode.FREE else InvoiceMode.STOCK
+    } else InvoiceMode.fromRaw(invoiceMode)
 }
 
 @Keep
