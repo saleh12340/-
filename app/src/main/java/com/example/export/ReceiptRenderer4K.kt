@@ -20,6 +20,7 @@ import com.example.domain.Contact
 import com.example.domain.ContactType
 import com.example.domain.Invoice
 import com.example.domain.InvoiceType
+import com.example.domain.InvoiceMode
 import com.example.domain.NumberFormatUtils
 import com.example.domain.Payment
 import com.example.domain.PaymentMethod
@@ -130,7 +131,8 @@ object ReceiptRenderer4K {
         }
 
         val isPurchase = invoice.resolvedType == InvoiceType.PURCHASE
-        val typeLabel = if (isPurchase) "فاتورة شراء (جملة)" else "فاتورة بيع"
+        val typeLabel = (if (isPurchase) "فاتورة شراء" else "فاتورة بيع") +
+            if (invoice.resolvedMode == InvoiceMode.FREE) " • حرة" else " • من المخزن"
         val isCash = invoice.resolvedPaymentMethod == PaymentMethod.CASH
         val dateText = dateFormatter.format(invoice.createdAt?.toDate() ?: Date())
 
