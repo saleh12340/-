@@ -642,6 +642,10 @@ class WarehouseRepository(
             check(uid == userId) { "تعارض هوية المستخدم" }
             require(invoiceId.isNotBlank()) { "معرف الفاتورة غير صالح" }
             require(draftLines.isNotEmpty() && draftLines.size <= 50) { "يجب إضافة صنف واحد على الأقل للفاتورة" }
+                val invoiceMode = draftLines.first().invoiceMode
+                require(draftLines.all { it.invoiceMode == invoiceMode }) {
+                    "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
+                }
             if (paymentMethod == PaymentMethod.CREDIT) {
                 require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد للفاتورة الآجلة" }
             }
