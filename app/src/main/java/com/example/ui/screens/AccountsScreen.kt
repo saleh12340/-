@@ -129,7 +129,12 @@ private sealed class LedgerOpItem {
         override val id: String get() = payment.id
         override val timestamp: Long get() = payment.createdAt?.toDate()?.time ?: 0L
         override val dateStr: String get() = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(payment.createdAt?.toDate() ?: Date())
-        override val title: String get() = "سند سداد"
+        override val title: String
+            get() = when {
+                payment.notes.contains("توصيل", ignoreCase = true) -> "سند توصيل"
+                payment.notes.contains("طرح", ignoreCase = true) -> "سند طرح"
+                else -> "سند سداد"
+            }
         override val subtitle: String get() = payment.notes.ifBlank { "سداد رصيد" }
         override val amount: Double get() = payment.amount
         override val notes: String get() = payment.notes
@@ -563,6 +568,17 @@ private fun CustomerLedgerOperationsScreen(
         (contactInvoices + contactPayments).sortedByDescending { it.timestamp }
     }
 
+    // Ledger accounting: invoices are debit; payments/vouchers are credit.
+    // Paid portions of cash invoices are included in credit so the summary reconciles
+    // with the account balance without creating duplicate ledger records.
+    val totalDebit = remember(contactInvoices) {
+        contactInvoices.sumOf { it.invoice.totalAmount.coerceAtLeast(0.0) }
+    }
+    val totalCredit = remember(contactInvoices, contactPayments) {
+        contactPayments.sumOf { it.payment.amount.coerceAtLeast(0.0) } +
+            contactInvoices.sumOf { it.invoice.resolvedPaidAmount.coerceAtLeast(0.0) }
+    }
+
     var filterMode by remember { mutableIntStateOf(0) } // 0: الكل, 1: فواتير, 2: سندات
     val operations = remember(allOps, filterMode) {
         when (filterMode) {
@@ -624,6 +640,23 @@ private fun CustomerLedgerOperationsScreen(
                             text = "الرصيد: ${NumberFormatUtils.formatNumber(contact.balance)} ريال • (${allOps.size} عملية مسجلة)",
                             style = MaterialTheme.typography.labelSmall,
                             color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.85f),
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "مدين: ${NumberFormatUtils.formatNumber(totalDebit)} ر  •  دائن: ${NumberFormatUtils.formatNumber(totalCredit)} ر",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.95f),
+                            maxLines = 1
+                        )
+                        Text(
+                            text = if (contact.balance >= 0.0) {
+                                "الصافي المستحق: ${NumberFormatUtils.formatNumber(contact.balance)} ريال (مدين)"
+                            } else {
+                                "الصافي المستحق: ${NumberFormatUtils.formatNumber(kotlin.math.abs(contact.balance))} ريال (دائن)"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = androidx.compose.ui.graphics.Color.White,
                             maxLines = 1
                         )
                     }
@@ -850,6 +883,14 @@ private fun CustomerLedgerOperationsScreen(
                                         .weight(1.1f)
                                         .padding(horizontal = 4.dp)
                                 ) {
+                                    Text(
+                                        text = if (op.isInvoice) "مدين" else "دائن",
+                                        fontFamily = AmiriFontFamily,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (op.isInvoice) LedgerCrimson else EmeraldAccent,
+                                        maxLines = 1
+                                    )
                                     Text(
                                         text = "${NumberFormatUtils.formatNumber(op.amount)} ر",
                                         fontFamily = AmiriFontFamily,
