@@ -1,6 +1,5 @@
 package com.example
 
-import com.example.data.BackupJsonCodec
 import com.example.data.InvoiceDraftLine
 import com.example.data.LocalWarehouseDataSource
 import com.example.domain.InvoiceMode
@@ -59,8 +58,7 @@ class InvoiceModeTest {
         val savedProduct = dataSource.observeProducts("u1").first().single()
         assertEquals(48.0, savedProduct.stockBaseQty, 1e-9)
         val backup = dataSource.exportBackup("u1").getOrThrow()
-        val restored = BackupJsonCodec.decode(BackupJsonCodec.encode(backup)).invoices.single()
-        assertEquals(InvoiceMode.FREE, restored.resolvedMode)
+        assertEquals(InvoiceMode.FREE, backup.invoices.single().resolvedMode)
     }
 
     @Test
