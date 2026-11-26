@@ -88,4 +88,31 @@ class InvoiceModeTest {
         assertTrue(result.isFailure)
         assertEquals(20.0, dataSource.observeProducts("u1").first().single().stockBaseQty, 1e-9)
     }
+    @Test
+    fun `free purchase refuses same-name item with incompatible unit conversion`() = runBlocking {
+        val dataSource = LocalWarehouseDataSource(storageFile = null)
+        val existingId = dataSource.saveProduct(
+            userId = "u1", existingId = null, name = "مناديل", barcode = "",
+            baseUnitName = "حبة", defaultUnitName = "كرتون",
+            unitTiers = listOf(UnitTier("كرتون", 24.0)),
+            baseCost = 100.0, baseSellPrice = 150.0, stockBaseQty = 48.0,
+            trackExpiry = false, expiryDate = "", minStockAlert = 0.0
+        ).getOrThrow()
+        val incompatibleDraft = Product(
+            id = "draft_bad_units", userId = "u1", name = "مناديل",
+            baseUnitName = "حبة", defaultUnitName = "كرتون",
+            unitTiers = listOf(UnitTier("كرتون", 20.0)),
+            baseCost = 120.0, baseSellPrice = 150.0
+        )
+
+        val result = dataSource.postInvoice(
+            "u1", "FREE-PURCHASE-BAD-UNITS", InvoiceType.PURCHASE, PaymentMethod.CASH, "", "",
+            listOf(InvoiceDraftLine("", "كرتون", 1.0, 2400.0, incompatibleDraft, InvoiceMode.FREE)), ""
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(1, dataSource.observeProducts("u1").first().size)
+        assertEquals(48.0, dataSource.observeProducts("u1").first().single { it.id == existingId }.stockBaseQty, 1e-9)
+    }
+
 }
