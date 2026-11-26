@@ -234,4 +234,77 @@ class BackupAndDuplicateTest {
         assertEquals(1000.0, ds.observeContacts(userId).first().single().balance, 1e-9)
         assertTrue(ds.observePayments(userId).first().isEmpty())
     }
+
+
+    @Test
+    fun `new purchase draft product is created only when invoice is committed`() = runBlocking {
+        val ds = LocalWarehouseDataSource(storageFile = null)
+        val userId = "u1"
+        val transient = Product(
+            id = "draft_purchase_1", userId = userId, name = "مناديل",
+            baseUnitName = "حبة", defaultUnitName = "كرتون",
+            unitTiers = listOf(UnitTier("كرتون", 24.0)),
+            baseCost = 100.0, baseSellPrice = 150.0, stockBaseQty = 0.0
+        )
+        assertTrue(ds.observeProducts(userId).first().isEmpty())
+        val invoice = ds.postInvoice(
+            userId, "PUR-DRAFT-1", InvoiceType.PURCHASE, PaymentMethod.CASH, "", "",
+            listOf(InvoiceDraftLine("", "كرتون", 2.0, 2400.0, transient)), ""
+        ).getOrThrow()
+        val savedProducts = ds.observeProducts(userId).first()
+        assertEquals(1, savedProducts.size)
+        assertEquals(48.0, savedProducts.single().stockBaseQty, 1e-9)
+        assertEquals(savedProducts.single().id, invoice.lines.single().productId)
+        assertEquals("مناديل", invoice.lines.single().productName)
+    }
+
+    @Test
+    fun `free sale draft product stays in invoice and never changes inventory`() = runBlocking {
+        val ds = LocalWarehouseDataSource(storageFile = null)
+        val userId = "u1"
+        val existingId = ds.saveProduct(
+            userId = userId, existingId = null, name = "ماء", barcode = "",
+            baseUnitName = "حبة", defaultUnitName = "حبة", unitTiers = emptyList(),
+            baseCost = 10.0, baseSellPrice = 15.0, stockBaseQty = 30.0,
+            trackExpiry = false, expiryDate = "", minStockAlert = 0.0
+        ).getOrThrow()
+        val freeItem = Product(
+            id = "draft_free_1", userId = userId, name = "خدمة توصيل",
+            baseUnitName = "خدمة", defaultUnitName = "خدمة",
+            baseCost = 0.0, baseSellPrice = 0.0
+        )
+        val invoice = ds.postInvoice(
+            userId, "SAL-FREE-1", InvoiceType.SALE, PaymentMethod.CASH, "", "",
+            listOf(InvoiceDraftLine("", "خدمة", 2.0, 500.0, freeItem)), ""
+        ).getOrThrow()
+        assertEquals(1, ds.observeProducts(userId).first().size)
+        assertEquals(30.0, ds.observeProducts(userId).first().single { it.id == existingId }.stockBaseQty, 1e-9)
+        assertEquals("", invoice.lines.single().productId)
+        assertEquals("خدمة توصيل", invoice.lines.single().productName)
+        assertEquals(1000.0, invoice.totalAmount, 1e-9)
+        ds.deleteInvoice(userId, invoice.id).getOrThrow()
+        assertEquals(30.0, ds.observeProducts(userId).first().single { it.id == existingId }.stockBaseQty, 1e-9)
+    }
+
+    @Test
+    fun `free sale invoice can be edited without creating products or affecting stock`() = runBlocking {
+        val ds = LocalWarehouseDataSource(storageFile = null)
+        val userId = "u1"
+        val freeItem = Product(
+            id = "draft_free_edit", userId = userId, name = "أجرة نقل",
+            baseUnitName = "خدمة", defaultUnitName = "خدمة"
+        )
+        val created = ds.postInvoice(
+            userId, "SAL-FREE-EDIT", InvoiceType.SALE, PaymentMethod.CASH, "", "",
+            listOf(InvoiceDraftLine("", "خدمة", 1.0, 200.0, freeItem)), ""
+        ).getOrThrow()
+        val updatedItem = freeItem.copy(id = "draft_free_edit_2", name = "أجرة تحميل")
+        val updated = ds.updateInvoice(
+            userId, created.id, "SAL-FREE-EDIT", InvoiceType.SALE, PaymentMethod.CASH, "", "",
+            listOf(InvoiceDraftLine("", "خدمة", 3.0, 150.0, updatedItem)), "تعديل"
+        ).getOrThrow()
+        assertEquals("أجرة تحميل", updated.lines.single().productName)
+        assertEquals(450.0, updated.totalAmount, 1e-9)
+        assertTrue(ds.observeProducts(userId).first().isEmpty())
+    }
 }
