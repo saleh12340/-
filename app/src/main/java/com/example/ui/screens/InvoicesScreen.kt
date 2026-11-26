@@ -306,8 +306,11 @@ fun InvoicesScreen(
                 val lineProduct = prod ?: Product(
                     id = "free_${line.productName.hashCode()}_${line.unitName.hashCode()}",
                     name = line.productName,
-                    baseUnitName = line.unitName,
+                    baseUnitName = if (line.cumulativeFactor == 1.0) line.unitName else "حبة",
                     defaultUnitName = line.unitName,
+                    unitTiers = if (line.cumulativeFactor == 1.0) emptyList() else listOf(
+                        com.example.domain.UnitTier(line.unitName, line.cumulativeFactor)
+                    ),
                     baseSellPrice = line.unitPrice
                 )
                 lineKeyCounter++
@@ -2148,7 +2151,7 @@ private fun SmartProductSuggestionsPanel(
                 }
             }
 
-            if (invoiceType == InvoiceType.PURCHASE && canQuickCreate) {
+            if (canQuickCreate) {
                 Surface(
                     onClick = onQuickAddNewProduct,
                     shape = RoundedCornerShape(10.dp),
@@ -2170,10 +2173,10 @@ private fun SmartProductSuggestionsPanel(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = if (query.isNotBlank()) {
-                                "+ إضافة صنف جديد للمخزون وشرائه جملة: \"${query.trim()}\""
+                            text = if (invoiceType == InvoiceType.PURCHASE) {
+                                if (query.isNotBlank()) "+ إضافة صنف جديد للمخزون وشرائه جملة: \"${query.trim()}\"" else "+ تعريف صنف جديد في المخزون والشراء جملة"
                             } else {
-                                "+ تعريف صنف جديد في المخزون والشراء جملة"
+                                if (query.isNotBlank()) "+ إضافة صنف حر لهذه الفاتورة: \"${query.trim()}\"" else "+ إضافة صنف حر للفاتورة"
                             },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
