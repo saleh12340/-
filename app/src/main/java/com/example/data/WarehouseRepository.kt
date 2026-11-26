@@ -599,7 +599,7 @@ class WarehouseRepository(
                     contactId = contactId.trim(), contactName = resolvedContactName,
                     totalAmount = grandTotal, lines = finalLines, notes = notes.trim().take(300)
                 )
-            }.await())
+            }.await()
 
             Result.success(createdInvoice)
         } catch (e: CancellationException) {
