@@ -308,25 +308,11 @@ class WarehouseViewModel(
         }
         val defaultUnit = tiers.lastOrNull()?.name ?: cleanBase
 
-        val saveResult = dataSource.saveProduct(
-            userId = currentUserId,
-            existingId = null,
-            name = cleanName,
-            barcode = barcode.trim(),
-            baseUnitName = cleanBase,
-            defaultUnitName = defaultUnit,
-            unitTiers = tiers,
-            baseCost = computedBaseCost,
-            baseSellPrice = baseSellPrice.coerceAtLeast(0.0),
-            stockBaseQty = 0.0,
-            trackExpiry = false,
-            expiryDate = "",
-            minStockAlert = 0.0
-        )
-        return saveResult.map { createdId ->
-            _actionMessage.value = "تم إضافة ($cleanName) للمخزون؛ ستُضاف الكمية عند حفظ الفاتورة"
+        // Keep the product transient until the purchase invoice is committed.
+        // A sale invoice may also use this object as a free line, but must never persist it.
+        Result.success(
             Product(
-                id = createdId,
+                id = "draft_${java.util.UUID.randomUUID().toString().replace("-", "")}",
                 userId = currentUserId,
                 name = cleanName,
                 barcode = barcode.trim(),
@@ -337,7 +323,7 @@ class WarehouseViewModel(
                 baseSellPrice = baseSellPrice.coerceAtLeast(0.0),
                 stockBaseQty = 0.0
             )
-        }
+        )
     }
 
     fun deleteProduct(productId: String) {
