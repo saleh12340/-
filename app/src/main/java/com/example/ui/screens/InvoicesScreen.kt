@@ -1666,6 +1666,16 @@ fun InvoicesScreen(
                             ) {
                                 commitActiveFreeSaleLine()
                             }
+                            if (draftLines.isEmpty() &&
+                                invoiceMode == InvoiceMode.FREE &&
+                                invoiceType == InvoiceType.PURCHASE &&
+                                draftSearchQuery.isNotBlank()
+                            ) {
+                                // Purchase-free lines need wholesale/base-unit conversion details.
+                                // Open the unit-aware form instead of rejecting the typed active row.
+                                showQuickWholesaleDialog = true
+                                return@Button
+                            }
                             if (draftLines.isEmpty()) {
                                 localError = if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.PURCHASE) {
                                     "أضف الصنف من زر الإضافة وأكمل بيانات وحدة الجملة قبل حفظ فاتورة الشراء الحرة"
