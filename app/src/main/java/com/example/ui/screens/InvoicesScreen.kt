@@ -1901,7 +1901,12 @@ fun InvoicesScreen(
             initialTotalText = draftTotalInput,
             onDismiss = { showQuickWholesaleDialog = false },
             onConfirmCreate = { name, barcode, baseUnit, wholesaleUnit, factor, purchaseQty, wholesaleUnitCost, baseSellPrice ->
-                scope.launch {
+                if (invoiceType == InvoiceType.PURCHASE && draftLines.any {
+                    it.product.name.trim().equals(name.trim(), ignoreCase = true)
+                }) {
+                    localError = "الصنف موجود مسبقًا في هذه الفاتورة؛ أضف الكمية إلى السطر الموجود"
+                    showQuickWholesaleDialog = false
+                } else scope.launch {
                     val created = onQuickCreateProduct(
                         name,
                         barcode,
