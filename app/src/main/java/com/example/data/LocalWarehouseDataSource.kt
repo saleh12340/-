@@ -225,8 +225,36 @@ class LocalWarehouseDataSource internal constructor(
                 var grandTotal = 0.0
 
                 for (draft in draftLines) {
-                    val currentProd = productsMap[draft.productId]
-                        ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                    require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
+                    require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
+
+                    // Free sale rows are invoice-only: no inventory lookup, creation or stock deduction.
+                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
+                        val product = draft.draftProduct
+                        val factor = UnitCostEngine.getAvailableUnits(product)
+                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
+                            ?.cumulativeFactor ?: 1.0
+                        val line = InvoiceLine(
+                            productId = "",
+                            productName = product.name,
+                            unitName = draft.unitName,
+                            cumulativeFactor = factor,
+                            unitQty = draft.unitQty,
+                            unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor,
+                            lineTotal = draft.unitQty * draft.unitPrice
+                        )
+                        finalLines.add(line)
+                        grandTotal += line.lineTotal
+                        continue
+                    }
+
+                    var currentProd = productsMap[draft.productId]
+                    if (currentProd == null && invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
+                        currentProd = materializePurchaseDraftProduct(userId, draft.draftProduct, productsMap)
+                    }
+                    currentProd = currentProd ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                    val productId = currentProd.id
 
                     if (invoiceType == InvoiceType.PURCHASE) {
                         val computed = UnitCostEngine.computePurchaseLine(
@@ -235,9 +263,9 @@ class LocalWarehouseDataSource internal constructor(
                             unitQty = draft.unitQty,
                             unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
+                        finalLines.add(computed.line.copy(productId = productId))
                         grandTotal += computed.line.lineTotal
-                        productsMap[draft.productId] = currentProd.copy(
+                        productsMap[productId] = currentProd.copy(
                             stockBaseQty = computed.newStockBaseQty,
                             baseCost = computed.updatedBaseCost,
                             updatedAt = Timestamp.now()
@@ -251,7 +279,7 @@ class LocalWarehouseDataSource internal constructor(
                         ).getOrThrow()
                         finalLines.add(computed.line)
                         grandTotal += computed.line.lineTotal
-                        productsMap[draft.productId] = currentProd.copy(
+                        productsMap[productId] = currentProd.copy(
                             stockBaseQty = computed.newStockBaseQty,
                             updatedAt = Timestamp.now()
                         )
@@ -287,7 +315,7 @@ class LocalWarehouseDataSource internal constructor(
                     updatedAt = now
                 )
 
-                productsFlow.value = productsFlow.value.map { productsMap[it.id] ?: it }
+                productsFlow.value = productsMap.values.toList()
                 if (paymentMethod == PaymentMethod.CREDIT && contactId.isNotBlank()) {
                     contactsFlow.value = contactsFlow.value.map { c ->
                         if (c.id == contactId) c.copy(balance = c.balance + grandTotal, updatedAt = now) else c
@@ -347,34 +375,48 @@ class LocalWarehouseDataSource internal constructor(
                 val finalLines = mutableListOf<InvoiceLine>()
                 var grandTotal = 0.0
                 for (draft in draftLines) {
-                    val currentProd = productsMap[draft.productId]
-                        ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                    require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
+                    require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
+                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
+                        val product = draft.draftProduct
+                        val factor = UnitCostEngine.getAvailableUnits(product)
+                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
+                            ?.cumulativeFactor ?: 1.0
+                        val line = InvoiceLine(
+                            productId = "", productName = product.name, unitName = draft.unitName,
+                            cumulativeFactor = factor, unitQty = draft.unitQty, unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor, lineTotal = draft.unitQty * draft.unitPrice
+                        )
+                        finalLines.add(line)
+                        grandTotal += line.lineTotal
+                        continue
+                    }
+                    var currentProd = productsMap[draft.productId]
+                    if (currentProd == null && invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
+                        currentProd = materializePurchaseDraftProduct(userId, draft.draftProduct, productsMap)
+                    }
+                    currentProd = currentProd ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                    val productId = currentProd.id
                     if (invoiceType == InvoiceType.PURCHASE) {
                         val computed = UnitCostEngine.computePurchaseLine(
-                            product = currentProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            unitPrice = draft.unitPrice
+                            product = currentProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
+                        finalLines.add(computed.line.copy(productId = productId))
                         grandTotal += computed.line.lineTotal
-                        productsMap[draft.productId] = currentProd.copy(
+                        productsMap[productId] = currentProd.copy(
                             stockBaseQty = computed.newStockBaseQty,
-                            baseCost = computed.updatedBaseCost,
-                            updatedAt = now
+                            baseCost = computed.updatedBaseCost, updatedAt = now
                         )
                     } else {
                         val computed = UnitCostEngine.computeSaleLine(
-                            product = currentProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            customUnitPrice = draft.unitPrice
+                            product = currentProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, customUnitPrice = draft.unitPrice
                         ).getOrThrow()
                         finalLines.add(computed.line)
                         grandTotal += computed.line.lineTotal
-                        productsMap[draft.productId] = currentProd.copy(
-                            stockBaseQty = computed.newStockBaseQty,
-                            updatedAt = now
+                        productsMap[productId] = currentProd.copy(
+                            stockBaseQty = computed.newStockBaseQty, updatedAt = now
                         )
                     }
                 }
@@ -406,7 +448,7 @@ class LocalWarehouseDataSource internal constructor(
                     updatedAt = now
                 )
 
-                productsFlow.value = productsFlow.value.map { productsMap[it.id] ?: it }
+                productsFlow.value = productsMap.values.toList()
                 contactsFlow.value = contactsFlow.value.map { contactsMap[it.id] ?: it }
                 invoicesFlow.value = invoicesFlow.value.map { if (it.id == invoiceId) updatedInvoice else it }
                 persistToDiskLocked()
@@ -434,7 +476,7 @@ class LocalWarehouseDataSource internal constructor(
                         }
                         productsMap[oldLine.productId] = existingProd.copy(stockBaseQty = restoredQty, updatedAt = now)
                     }
-                    productsFlow.value = productsFlow.value.map { productsMap[it.id] ?: it }
+                    productsFlow.value = productsMap.values.toList()
 
                     if (oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && oldInvoice.contactId.isNotBlank()) {
                         contactsFlow.value = contactsFlow.value.map { c ->
@@ -878,4 +920,36 @@ object BackupJsonCodec {
             payments = payments
         )
     }
+}
+
+
+private fun materializePurchaseDraftProduct(
+    userId: String,
+    source: Product,
+    products: MutableMap<String, Product>
+): Product {
+    val name = source.name.trim()
+    require(name.isNotEmpty()) { "اسم الصنف مطلوب" }
+    require(source.baseCost.isFinite() && source.baseCost >= 0.0) { "تكلفة الصنف غير صالحة" }
+    require(source.baseSellPrice.isFinite() && source.baseSellPrice >= 0.0) { "سعر البيع غير صالح" }
+    UnitCostEngine.resolveUnitLevels(source.baseUnitName, source.unitTiers).getOrThrow()
+    val duplicate = products.values.firstOrNull { it.name.trim().equals(name, ignoreCase = true) }
+    if (duplicate != null) {
+        require(duplicate.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
+            "يوجد صنف بالاسم نفسه ولكن بوحدة أساسية مختلفة"
+        }
+        return duplicate
+    }
+    if (source.barcode.isNotBlank()) {
+        require(products.values.none { it.barcode.trim().equals(source.barcode.trim(), ignoreCase = true) }) {
+            "الباركود مسجل لصنف آخر"
+        }
+    }
+    val id = "loc_prod_${UUID.randomUUID().toString().replace("-", "").take(16)}"
+    val created = source.copy(
+        id = id, userId = userId, name = name, stockBaseQty = 0.0,
+        createdAt = Timestamp.now(), updatedAt = Timestamp.now()
+    )
+    products[id] = created
+    return created
 }

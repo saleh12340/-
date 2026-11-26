@@ -419,120 +419,185 @@ class WarehouseRepository(
                 if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
             }.take(120)
 
+            val purchaseDraftProducts = draftLines.mapNotNull { it.draftProduct }.distinctBy { it.id }
+                .takeIf { invoiceType == InvoiceType.PURCHASE }.orEmpty()
+            val storedProductsForMatch = if (purchaseDraftProducts.isNotEmpty()) {
+                userDoc(uid).collection("products").get().await().documents.mapNotNull { doc ->
+                    doc.toObject(Product::class.java)?.copy(id = doc.id)
+                }
+            } else emptyList()
+            val matchedPurchaseIds = purchaseDraftProducts.mapNotNull { source ->
+                storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }?.let { source.id to it.id }
+            }.toMap()
+            for (source in purchaseDraftProducts) {
+                val sameName = storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }
+                if (sameName != null) {
+                    require(sameName.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
+                        "الصنف موجود في المخزن بوحدة أساسية مختلفة؛ اختر الصنف المسجل"
+                    }
+                } else if (source.barcode.isNotBlank()) {
+                    require(storedProductsForMatch.none {
+                        it.barcode.trim().equals(source.barcode.trim(), ignoreCase = true)
+                    }) { "الباركود مسجل لصنف آخر" }
+                }
+            }
+            val newPurchaseRefs = purchaseDraftProducts
+                .filter { it.id !in matchedPurchaseIds }
+                .associate { it.id to userDoc(uid).collection("products").document() }
+
             val createdInvoice = db.runTransaction { tx ->
-                val productSnapshots = draftLines.map { it.productId }.distinct().associateWith { pid ->
+                // Read every existing product and contact before performing any write.
+                val existingIds = (draftLines
+                    .filter { it.draftProduct == null && it.productId.isNotBlank() }
+                    .map { it.productId } + matchedPurchaseIds.values).distinct()
+                val productSnapshots = existingIds.associateWith { pid ->
                     val ref = userDoc(uid).collection("products").document(pid)
-                    val snap = tx.get(ref)
-                    val prod = snap.toObject(Product::class.java)
+                    val prod = tx.get(ref).toObject(Product::class.java)
                         ?: throw IllegalStateException("الصنف غير موجود في المخزون")
                     ref to prod
-                }.toMutableMap()
-
+                }
                 val contactPair = if (paymentMethod == PaymentMethod.CREDIT && contactId.isNotBlank()) {
                     val cRef = userDoc(uid).collection("contacts").document(contactId)
-                    val cSnap = tx.get(cRef)
-                    val c = cSnap.toObject(Contact::class.java)
+                    val c = tx.get(cRef).toObject(Contact::class.java)
                         ?: throw IllegalStateException("الحساب المحدد غير موجود")
                     cRef to c
                 } else null
 
                 val finalLines = mutableListOf<InvoiceLine>()
                 val productUpdates = mutableMapOf<String, Pair<Double, Double>>()
+                val productRefs = mutableMapOf<String, com.google.firebase.firestore.DocumentReference>()
+                val originalProducts = mutableMapOf<String, Product>()
                 var grandTotal = 0.0
 
                 for (draft in draftLines) {
-                    val (_, currentProd) = productSnapshots[draft.productId]
-                        ?: throw IllegalStateException("الصنف غير موجود")
-                    val runningTuple = productUpdates[draft.productId]
-                    val effectiveProd = if (runningTuple != null) {
-                        currentProd.copy(stockBaseQty = runningTuple.first, baseCost = runningTuple.second)
-                    } else currentProd
+                    require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
+                    require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
 
+                    // A free sale is a snapshot line stored only in the invoice.
+                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
+                        val source = draft.draftProduct
+                        val factor = UnitCostEngine.getAvailableUnits(source)
+                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
+                            ?.cumulativeFactor ?: 1.0
+                        val line = InvoiceLine(
+                            productId = "", productName = source.name, unitName = draft.unitName,
+                            cumulativeFactor = factor, unitQty = draft.unitQty, unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor, lineTotal = draft.unitQty * draft.unitPrice
+                        )
+                        finalLines.add(line)
+                        grandTotal += line.lineTotal
+                        continue
+                    }
+
+                    val currentProd: Product
+                    val productId: String
+                    if (invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
+                        val source = draft.draftProduct
+                        val matchedId = matchedPurchaseIds[source.id]
+                        if (matchedId != null) {
+                            productId = matchedId
+                            val pair = productSnapshots[productId]
+                                ?: throw IllegalStateException("الصنف المسجل غير متاح")
+                            productRefs[productId] = pair.first
+                            originalProducts[productId] = pair.second
+                            currentProd = pair.second
+                        } else {
+                            val ref = newPurchaseRefs[source.id]
+                                ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
+                            productId = ref.id
+                            productRefs[productId] = ref
+                            currentProd = originalProducts.getOrPut(productId) {
+                                source.copy(id = productId, userId = uid, stockBaseQty = 0.0)
+                            }
+                        }
+                    } else {
+                        productId = draft.productId
+                        val pair = productSnapshots[productId]
+                            ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                        productRefs[productId] = pair.first
+                        originalProducts[productId] = pair.second
+                        currentProd = pair.second
+                    }
+
+                    val running = productUpdates[productId]
+                    val effectiveProd = if (running != null) {
+                        currentProd.copy(stockBaseQty = running.first, baseCost = running.second)
+                    } else currentProd
                     if (invoiceType == InvoiceType.PURCHASE) {
                         val computed = UnitCostEngine.computePurchaseLine(
-                            product = effectiveProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            unitPrice = draft.unitPrice
+                            product = effectiveProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
+                        finalLines.add(computed.line.copy(productId = productId))
                         grandTotal += computed.line.lineTotal
-                        productUpdates[draft.productId] = computed.newStockBaseQty to computed.updatedBaseCost
+                        productUpdates[productId] = computed.newStockBaseQty to computed.updatedBaseCost
                     } else {
                         val computed = UnitCostEngine.computeSaleLine(
-                            product = effectiveProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            customUnitPrice = draft.unitPrice
+                            product = effectiveProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, customUnitPrice = draft.unitPrice
                         ).getOrThrow()
                         finalLines.add(computed.line)
                         grandTotal += computed.line.lineTotal
-                        productUpdates[draft.productId] = computed.newStockBaseQty to effectiveProd.baseCost
+                        productUpdates[productId] = computed.newStockBaseQty to effectiveProd.baseCost
                     }
                 }
 
                 val serializedLines = finalLines.map { line ->
                     mapOf(
-                        "productId" to line.productId,
-                        "productName" to line.productName,
-                        "unitName" to line.unitName,
-                        "cumulativeFactor" to line.cumulativeFactor,
-                        "unitQty" to line.unitQty,
-                        "unitPrice" to line.unitPrice,
-                        "baseQty" to line.baseQty,
-                        "lineTotal" to line.lineTotal
+                        "productId" to line.productId, "productName" to line.productName,
+                        "unitName" to line.unitName, "cumulativeFactor" to line.cumulativeFactor,
+                        "unitQty" to line.unitQty, "unitPrice" to line.unitPrice,
+                        "baseQty" to line.baseQty, "lineTotal" to line.lineTotal
                     )
                 }
-
-                val invoicePayload = mapOf(
-                    "userId" to uid,
-                    "invoiceNumber" to cleanNumber.take(40),
-                    "invoiceType" to invoiceType.name,
-                    "paymentMethod" to paymentMethod.name,
-                    "contactId" to contactId.trim(),
-                    "contactName" to resolvedContactName,
-                    "totalAmount" to grandTotal,
-                    "lines" to serializedLines,
+                tx.set(invoiceDocRef, mapOf(
+                    "userId" to uid, "invoiceNumber" to cleanNumber.take(40),
+                    "invoiceType" to invoiceType.name, "paymentMethod" to paymentMethod.name,
+                    "contactId" to contactId.trim(), "contactName" to resolvedContactName,
+                    "totalAmount" to grandTotal, "lines" to serializedLines,
                     "notes" to notes.trim().take(300),
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "updatedAt" to FieldValue.serverTimestamp()
-                )
-                tx.set(invoiceDocRef, invoicePayload)
+                    "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
+                ))
 
                 for ((pid, tuple) in productUpdates) {
-                    val (ref, origProd) = productSnapshots.getValue(pid)
-                    val updates = mutableMapOf<String, Any>(
-                        "stockBaseQty" to tuple.first,
-                        "updatedAt" to FieldValue.serverTimestamp()
-                    )
-                    if (invoiceType == InvoiceType.PURCHASE && tuple.second != origProd.baseCost) {
-                        updates["baseCost"] = tuple.second
+                    val ref = productRefs.getValue(pid)
+                    val original = originalProducts.getValue(pid)
+                    if (pid in newPurchaseRefs.values.map { it.id }) {
+                        tx.set(ref, mapOf(
+                            "userId" to uid, "name" to original.name.trim(), "barcode" to original.barcode.trim(),
+                            "baseUnitName" to original.baseUnitName, "defaultUnitName" to original.defaultUnitName,
+                            "unitTiers" to original.unitTiers, "baseCost" to tuple.second,
+                            "baseSellPrice" to original.baseSellPrice, "stockBaseQty" to tuple.first,
+                            "trackExpiry" to original.trackExpiry, "expiryDate" to original.expiryDate,
+                            "minStockAlert" to original.minStockAlert,
+                            "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
+                        ))
+                    } else {
+                        val updates = mutableMapOf<String, Any>(
+                            "stockBaseQty" to tuple.first, "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                        if (invoiceType == InvoiceType.PURCHASE && tuple.second != original.baseCost) {
+                            updates["baseCost"] = tuple.second
+                        }
+                        tx.update(ref, updates)
                     }
-                    tx.update(ref, updates)
                 }
-
                 if (contactPair != null) {
                     val (cRef, contact) = contactPair
-                    tx.update(
-                        cRef,
-                        mapOf(
-                            "balance" to (contact.balance + grandTotal),
-                            "updatedAt" to FieldValue.serverTimestamp()
-                        )
-                    )
+                    tx.update(cRef, mapOf(
+                        "balance" to (contact.balance + grandTotal),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    ))
                 }
-
                 Invoice(
-                    id = invoiceDocRef.id,
-                    userId = uid,
-                    invoiceNumber = cleanNumber.take(40),
-                    invoiceType = invoiceType.name,
-                    paymentMethod = paymentMethod.name,
-                    contactId = contactId.trim(),
-                    contactName = resolvedContactName,
-                    totalAmount = grandTotal,
-                    lines = finalLines,
-                    notes = notes.trim().take(300)
+                    id = invoiceDocRef.id, userId = uid, invoiceNumber = cleanNumber.take(40),
+                    invoiceType = invoiceType.name, paymentMethod = paymentMethod.name,
+                    contactId = contactId.trim(), contactName = resolvedContactName,
+                    totalAmount = grandTotal, lines = finalLines, notes = notes.trim().take(300)
                 )
             }.await()
 
@@ -581,34 +646,59 @@ class WarehouseRepository(
                 if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
             }.take(120)
 
+            val purchaseDraftProducts = draftLines.mapNotNull { it.draftProduct }.distinctBy { it.id }
+                .takeIf { invoiceType == InvoiceType.PURCHASE }.orEmpty()
+            val storedProductsForMatch = if (purchaseDraftProducts.isNotEmpty()) {
+                userDoc(uid).collection("products").get().await().documents.mapNotNull { doc ->
+                    doc.toObject(Product::class.java)?.copy(id = doc.id)
+                }
+            } else emptyList()
+            val matchedPurchaseIds = purchaseDraftProducts.mapNotNull { source ->
+                storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }?.let { source.id to it.id }
+            }.toMap()
+            for (source in purchaseDraftProducts) {
+                val sameName = storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }
+                if (sameName != null) {
+                    require(sameName.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
+                        "الصنف موجود في المخزن بوحدة أساسية مختلفة؛ اختر الصنف المسجل"
+                    }
+                } else if (source.barcode.isNotBlank()) {
+                    require(storedProductsForMatch.none {
+                        it.barcode.trim().equals(source.barcode.trim(), ignoreCase = true)
+                    }) { "الباركود مسجل لصنف آخر" }
+                }
+            }
+            val newPurchaseRefs = purchaseDraftProducts
+                .filter { it.id !in matchedPurchaseIds }
+                .associate { it.id to userDoc(uid).collection("products").document() }
+
             val updatedInvoice = db.runTransaction { tx ->
                 // 1. Read old invoice first
                 val oldSnap = tx.get(invoiceDocRef)
                 val oldInvoice = oldSnap.toObject(Invoice::class.java)
                     ?: throw IllegalStateException("الفاتورة غير موجودة")
 
-                // 2. Read all distinct referenced products & contacts BEFORE any writes
-                val draftProductIds = draftLines.map { it.productId }.toSet()
-                val allProductIds = (oldInvoice.lines.map { it.productId } + draftLines.map { it.productId })
-                    .filter { it.isNotBlank() }
-                    .distinct()
-
+                // Read old and existing products first; transient purchase items need no read.
+                val allProductIds = (oldInvoice.lines.map { it.productId } +
+                    draftLines.filter { it.draftProduct == null }.map { it.productId } +
+                    matchedPurchaseIds.values)
+                    .filter { it.isNotBlank() }.distinct()
                 val productRefs = mutableMapOf<String, com.google.firebase.firestore.DocumentReference>()
                 val origProducts = mutableMapOf<String, Product>()
                 val workingProducts = mutableMapOf<String, Product>()
-
                 for (pid in allProductIds) {
                     val pRef = userDoc(uid).collection("products").document(pid)
-                    val pSnap = tx.get(pRef)
-                    val prod = pSnap.toObject(Product::class.java)
-                    if (prod == null) {
-                        if (pid in draftProductIds) {
-                            throw IllegalStateException("الصنف غير موجود في المخزون")
-                        }
-                    } else {
+                    val prod = tx.get(pRef).toObject(Product::class.java)
+                    if (prod != null) {
                         productRefs[pid] = pRef
                         origProducts[pid] = prod
                         workingProducts[pid] = prod
+                    } else if (draftLines.any { it.productId == pid && it.draftProduct == null }) {
+                        throw IllegalStateException("الصنف غير موجود في المخزون")
                     }
                 }
 
@@ -616,13 +706,11 @@ class WarehouseRepository(
                     oldInvoice.contactId.takeIf { oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && it.isNotBlank() },
                     contactId.takeIf { paymentMethod == PaymentMethod.CREDIT && it.isNotBlank() }
                 ).distinct()
-
                 val contactRefs = mutableMapOf<String, com.google.firebase.firestore.DocumentReference>()
                 val workingBalances = mutableMapOf<String, Double>()
                 for (cid in contactIdsToRead) {
                     val cRef = userDoc(uid).collection("contacts").document(cid)
-                    val cSnap = tx.get(cRef)
-                    val c = cSnap.toObject(Contact::class.java)
+                    val c = tx.get(cRef).toObject(Contact::class.java)
                     if (c == null) {
                         if (paymentMethod == PaymentMethod.CREDIT && cid == contactId) {
                             throw IllegalStateException("الحساب المحدد غير موجود")
@@ -633,48 +721,81 @@ class WarehouseRepository(
                     }
                 }
 
-                // 3. Reverse old invoice stock effects in memory
+                // Reverse only inventory-backed lines. Free sale rows have an empty productId.
                 for (oldLine in oldInvoice.lines) {
                     val cur = workingProducts[oldLine.productId] ?: continue
                     val restoredQty = if (oldInvoice.resolvedType == InvoiceType.PURCHASE) {
                         (cur.stockBaseQty - oldLine.baseQty).coerceAtLeast(0.0)
-                    } else {
-                        cur.stockBaseQty + oldLine.baseQty
-                    }
+                    } else cur.stockBaseQty + oldLine.baseQty
                     workingProducts[oldLine.productId] = cur.copy(stockBaseQty = restoredQty)
                 }
 
-                // 4. Apply new draft lines in memory
+                // Apply new lines; free sale rows remain invoice-only.
                 val finalLines = mutableListOf<InvoiceLine>()
                 var grandTotal = 0.0
                 for (draft in draftLines) {
-                    val currentProd = workingProducts[draft.productId]
-                        ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                    require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
+                    require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
+                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
+                        val source = draft.draftProduct
+                        val factor = UnitCostEngine.getAvailableUnits(source)
+                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
+                            ?.cumulativeFactor ?: 1.0
+                        val line = InvoiceLine(
+                            productId = "", productName = source.name, unitName = draft.unitName,
+                            cumulativeFactor = factor, unitQty = draft.unitQty, unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor, lineTotal = draft.unitQty * draft.unitPrice
+                        )
+                        finalLines.add(line)
+                        grandTotal += line.lineTotal
+                        continue
+                    }
+
+                    val currentProd: Product
+                    val productId: String
+                    if (invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
+                        val source = draft.draftProduct
+                        val matchedId = matchedPurchaseIds[source.id]
+                        if (matchedId != null) {
+                            productId = matchedId
+                            currentProd = workingProducts[productId]
+                                ?: throw IllegalStateException("الصنف المسجل غير متاح")
+                        } else {
+                            val ref = newPurchaseRefs[source.id]
+                                ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
+                            productId = ref.id
+                            productRefs[productId] = ref
+                            val base = origProducts.getOrPut(productId) {
+                                source.copy(id = productId, userId = uid, stockBaseQty = 0.0)
+                            }
+                            currentProd = workingProducts[productId] ?: base.also {
+                                workingProducts[productId] = it
+                            }
+                        }
+                    } else {
+                        productId = draft.productId
+                        currentProd = workingProducts[productId]
+                            ?: throw IllegalStateException("الصنف غير موجود في المخزون")
+                    }
+                    val effectiveProd = currentProd
                     if (invoiceType == InvoiceType.PURCHASE) {
                         val computed = UnitCostEngine.computePurchaseLine(
-                            product = currentProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            unitPrice = draft.unitPrice
+                            product = effectiveProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
+                        finalLines.add(computed.line.copy(productId = productId))
                         grandTotal += computed.line.lineTotal
-                        workingProducts[draft.productId] = currentProd.copy(
-                            stockBaseQty = computed.newStockBaseQty,
-                            baseCost = computed.updatedBaseCost
+                        workingProducts[productId] = effectiveProd.copy(
+                            stockBaseQty = computed.newStockBaseQty, baseCost = computed.updatedBaseCost
                         )
                     } else {
                         val computed = UnitCostEngine.computeSaleLine(
-                            product = currentProd,
-                            unitName = draft.unitName,
-                            unitQty = draft.unitQty,
-                            customUnitPrice = draft.unitPrice
+                            product = effectiveProd, unitName = draft.unitName,
+                            unitQty = draft.unitQty, customUnitPrice = draft.unitPrice
                         ).getOrThrow()
                         finalLines.add(computed.line)
                         grandTotal += computed.line.lineTotal
-                        workingProducts[draft.productId] = currentProd.copy(
-                            stockBaseQty = computed.newStockBaseQty
-                        )
+                        workingProducts[productId] = effectiveProd.copy(stockBaseQty = computed.newStockBaseQty)
                     }
                 }
 
@@ -722,14 +843,23 @@ class WarehouseRepository(
 
                 for ((pid, updatedProd) in workingProducts) {
                     val orig = origProducts.getValue(pid)
-                    if (updatedProd.stockBaseQty != orig.stockBaseQty || updatedProd.baseCost != orig.baseCost) {
+                    val isNewPurchaseProduct = newPurchaseRefs.values.any { it.id == pid }
+                    if (isNewPurchaseProduct) {
+                        tx.set(productRefs.getValue(pid), mapOf(
+                            "userId" to uid, "name" to updatedProd.name.trim(), "barcode" to updatedProd.barcode.trim(),
+                            "baseUnitName" to updatedProd.baseUnitName, "defaultUnitName" to updatedProd.defaultUnitName,
+                            "unitTiers" to updatedProd.unitTiers, "baseCost" to updatedProd.baseCost,
+                            "baseSellPrice" to updatedProd.baseSellPrice, "stockBaseQty" to updatedProd.stockBaseQty,
+                            "trackExpiry" to updatedProd.trackExpiry, "expiryDate" to updatedProd.expiryDate,
+                            "minStockAlert" to updatedProd.minStockAlert,
+                            "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
+                        ))
+                    } else if (updatedProd.stockBaseQty != orig.stockBaseQty || updatedProd.baseCost != orig.baseCost) {
                         val pUpdates = mutableMapOf<String, Any>(
                             "stockBaseQty" to updatedProd.stockBaseQty,
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
-                        if (updatedProd.baseCost != orig.baseCost) {
-                            pUpdates["baseCost"] = updatedProd.baseCost
-                        }
+                        if (updatedProd.baseCost != orig.baseCost) pUpdates["baseCost"] = updatedProd.baseCost
                         tx.update(productRefs.getValue(pid), pUpdates)
                     }
                 }

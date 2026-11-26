@@ -302,12 +302,22 @@ fun InvoicesScreen(
         val missingProducts = mutableListOf<String>()
         invoice.lines.forEach { line ->
             val prod = products.firstOrNull { it.id == line.productId }
-            if (prod != null) {
+            if (prod != null || line.productId.isBlank()) {
+                val lineProduct = prod ?: Product(
+                    id = "free_${line.productName.hashCode()}_${line.unitName.hashCode()}",
+                    name = line.productName,
+                    baseUnitName = if (line.cumulativeFactor == 1.0) line.unitName else "حبة",
+                    defaultUnitName = line.unitName,
+                    unitTiers = if (line.cumulativeFactor == 1.0) emptyList() else listOf(
+                        com.example.domain.UnitTier(line.unitName, line.cumulativeFactor)
+                    ),
+                    baseSellPrice = line.unitPrice
+                )
                 lineKeyCounter++
                 draftLines.add(
                     PendingUiLine(
                         key = "line_$lineKeyCounter",
-                        product = prod,
+                        product = lineProduct,
                         unitName = line.unitName,
                         cumulativeFactor = line.cumulativeFactor,
                         unitQty = line.unitQty,
@@ -322,7 +332,7 @@ fun InvoicesScreen(
             }
         }
         if (missingProducts.isNotEmpty()) {
-            localError = "تم استبعاد أصناف غير موجودة بالمخزون: ${missingProducts.joinToString("، ")}"
+            localError = "تعذر تحميل بعض أصناف الفاتورة: ${missingProducts.joinToString("، ")}"
         }
         showHistory = false
     }
@@ -398,7 +408,7 @@ fun InvoicesScreen(
                 createdAt = editingInvoice?.createdAt,
                 lines = draftLines.map {
                     InvoiceLine(
-                        productId = it.product.id,
+                        productId = it.product.id.takeUnless { id -> id.startsWith("draft_") || id.startsWith("free_") } ?: "",
                         productName = it.product.name,
                         unitName = it.unitName,
                         cumulativeFactor = it.cumulativeFactor,
@@ -1394,7 +1404,7 @@ fun InvoicesScreen(
                             // Smart Product Autocomplete Suggestions directly below active row (never steals focus)
                             AnimatedVisibility(
                                 visible = (isProductInputFocused || draftSearchQuery.isNotBlank()) &&
-                                    (products.isNotEmpty() || invoiceType == InvoiceType.PURCHASE)
+                                    (products.isNotEmpty() || onQuickCreateProduct != null)
                             ) {
                                 SmartProductSuggestionsPanel(
                                     invoiceType = invoiceType,
@@ -1568,6 +1578,7 @@ fun InvoicesScreen(
                             }
                             if (invoiceType == InvoiceType.SALE) {
                                 val overStockLine = draftLines.firstOrNull { line ->
+                                    if (line.product.id.startsWith("draft_") || line.product.id.startsWith("free_")) return@firstOrNull false
                                     val available = effectiveAvailableStock(line.product)
                                     val required = draftLines
                                         .filter { it.product.id == line.product.id }
@@ -1587,10 +1598,11 @@ fun InvoicesScreen(
                             localError = null
                             val payloadLines = draftLines.map {
                                 InvoiceDraftLine(
-                                    productId = it.product.id,
+                                    productId = it.product.id.takeUnless { id -> id.startsWith("draft_") || id.startsWith("free_") } ?: "",
                                     unitName = it.unitName,
                                     unitQty = it.unitQty,
-                                    unitPrice = it.unitPrice
+                                    unitPrice = it.unitPrice,
+                                    draftProduct = it.product.takeIf { product -> product.id.startsWith("draft_") || product.id.startsWith("free_") }
                                 )
                             }
                             val resolvedContactId = selectedContact?.id ?: ""
@@ -1883,12 +1895,18 @@ fun InvoicesScreen(
     // Dialog: Quick-create a brand new wholesale product into inventory directly from Purchase Invoice
     if (showQuickWholesaleDialog && onQuickCreateProduct != null) {
         QuickWholesaleProductDialog(
+            invoiceType = invoiceType,
             initialName = draftSearchQuery.trim(),
             initialQtyText = draftQtyInput.ifBlank { "1" },
             initialTotalText = draftTotalInput,
             onDismiss = { showQuickWholesaleDialog = false },
             onConfirmCreate = { name, barcode, baseUnit, wholesaleUnit, factor, purchaseQty, wholesaleUnitCost, baseSellPrice ->
-                scope.launch {
+                if (invoiceType == InvoiceType.PURCHASE && draftLines.any {
+                    it.product.name.trim().equals(name.trim(), ignoreCase = true)
+                }) {
+                    localError = "الصنف موجود مسبقًا في هذه الفاتورة؛ أضف الكمية إلى السطر الموجود"
+                    showQuickWholesaleDialog = false
+                } else scope.launch {
                     val created = onQuickCreateProduct(
                         name,
                         barcode,
@@ -2138,7 +2156,7 @@ private fun SmartProductSuggestionsPanel(
                 }
             }
 
-            if (invoiceType == InvoiceType.PURCHASE && canQuickCreate) {
+            if (canQuickCreate) {
                 Surface(
                     onClick = onQuickAddNewProduct,
                     shape = RoundedCornerShape(10.dp),
@@ -2160,10 +2178,10 @@ private fun SmartProductSuggestionsPanel(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = if (query.isNotBlank()) {
-                                "+ إضافة صنف جديد للمخزون وشرائه جملة: \"${query.trim()}\""
+                            text = if (invoiceType == InvoiceType.PURCHASE) {
+                                if (query.isNotBlank()) "+ إضافة صنف جديد للمخزون وشرائه جملة: \"${query.trim()}\"" else "+ تعريف صنف جديد في المخزون والشراء جملة"
                             } else {
-                                "+ تعريف صنف جديد في المخزون والشراء جملة"
+                                if (query.isNotBlank()) "+ إضافة صنف حر لهذه الفاتورة: \"${query.trim()}\"" else "+ إضافة صنف حر للفاتورة"
                             },
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.Bold,
@@ -2252,6 +2270,7 @@ private fun SmartProductSuggestionsPanel(
 
 @Composable
 private fun QuickWholesaleProductDialog(
+    invoiceType: InvoiceType,
     initialName: String,
     initialQtyText: String,
     initialTotalText: String,
@@ -2309,7 +2328,7 @@ private fun QuickWholesaleProductDialog(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = "إضافة صنف جديد (شراء جملة)",
+                    text = if (invoiceType == InvoiceType.PURCHASE) "إضافة صنف جديد (شراء جملة)" else "إضافة صنف حر للفاتورة",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -2368,18 +2387,20 @@ private fun QuickWholesaleProductDialog(
                     LtrDecimalField(
                         value = wholesaleCostText,
                         onValueChange = { wholesaleCostText = NumberFormatUtils.sanitizeDecimalInput(it) },
-                        label = "سعر شراء الجملة",
+                        label = if (invoiceType == InvoiceType.PURCHASE) "سعر شراء الجملة" else "سعر الوحدة في الفاتورة",
                         modifier = Modifier.weight(1f)
                     )
-                    LtrDecimalField(
-                        value = baseSellText,
-                        onValueChange = { baseSellText = NumberFormatUtils.sanitizeDecimalInput(it) },
-                        label = "سعر بيع الحبة",
-                        modifier = Modifier.weight(1f)
-                    )
+                    if (invoiceType == InvoiceType.PURCHASE) {
+                        LtrDecimalField(
+                            value = baseSellText,
+                            onValueChange = { baseSellText = NumberFormatUtils.sanitizeDecimalInput(it) },
+                            label = "سعر بيع الحبة",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
-                if (addedBaseUnits > 0.0) {
+                if (addedBaseUnits > 0.0 && invoiceType == InvoiceType.PURCHASE) {
                     Surface(
                         color = EmeraldContainer,
                         shape = RoundedCornerShape(10.dp),
@@ -2401,6 +2422,9 @@ private fun QuickWholesaleProductDialog(
                     }
                 }
 
+                if (invoiceType == InvoiceType.SALE) {
+                    Text("سيُحفظ الصنف داخل فاتورة البيع فقط، ولن يُضاف إلى المخزن أو يُخصم منه.", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                }
                 errorMsg?.let {
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                 }
@@ -2711,7 +2735,8 @@ private fun InvoiceLinePickerDialog(
                         errorMsg = "السعر لا يمكن أن يكون سالبًا"
                         return@Button
                     }
-                    if (invoiceType == InvoiceType.SALE) {
+                    if (invoiceType == InvoiceType.SALE &&
+                        !prod.id.startsWith("draft_") && !prod.id.startsWith("free_")) {
                         val effectiveProd = prod.copy(stockBaseQty = availableStockForProduct(prod))
                         val check = UnitCostEngine.computeSaleLine(effectiveProd, unit.name, parsedQty, parsedPrice)
                         if (check.isFailure) {
