@@ -69,6 +69,16 @@ enum class InvoiceType {
     }
 }
 
+enum class InvoiceMode {
+    STOCK,
+    FREE;
+
+    companion object {
+        fun fromRaw(raw: String?): InvoiceMode =
+            entries.firstOrNull { it.name == raw } ?: STOCK
+    }
+}
+
 enum class PaymentMethod {
     CASH,
     CREDIT;
@@ -106,10 +116,13 @@ data class Invoice(
     val lines: List<InvoiceLine> = emptyList(),
     val notes: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
-    @ServerTimestamp val updatedAt: Timestamp? = null
+    @ServerTimestamp val updatedAt: Timestamp? = null,
+    // Defaults to STOCK so invoices saved before this field was introduced remain compatible.
+    val invoiceMode: String = InvoiceMode.STOCK.name
 ) {
     val resolvedType: InvoiceType get() = InvoiceType.fromRaw(invoiceType)
     val resolvedPaymentMethod: PaymentMethod get() = PaymentMethod.fromRaw(paymentMethod)
+    val resolvedMode: InvoiceMode get() = InvoiceMode.fromRaw(invoiceMode)
 }
 
 @Keep
