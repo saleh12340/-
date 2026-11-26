@@ -44,10 +44,7 @@ object ReceiptRenderer4K {
 
     private fun loadArabicTypeface(context: Context, bold: Boolean = false): Typeface {
         val base = try {
-            ResourcesCompat.getFont(context, R.font.amiri)
-                ?: ResourcesCompat.getFont(context, R.font.cairo)
-                ?: ResourcesCompat.getFont(context, R.font.tajawal)
-                ?: Typeface.DEFAULT
+            ResourcesCompat.getFont(context, R.font.amiri) ?: Typeface.DEFAULT
         } catch (_: Exception) {
             Typeface.DEFAULT
         }
@@ -67,10 +64,10 @@ object ReceiptRenderer4K {
         val settings = settingsOverride ?: PrinterSettingsStore.load(context)
         val effectiveStoreName = storeName.ifBlank { settings.storeName }
         val width = WIDTH_4K_PX
-        val outerPad = 56f
+        val outerPad = 24f
         val cardLeft = outerPad
         val cardRight = width - outerPad
-        val cardInnerPad = 48f
+        val cardInnerPad = 28f
         val innerLeft = cardLeft + cardInnerPad
         val innerRight = cardRight - cardInnerPad
         val innerWidth = innerRight - innerLeft
@@ -101,33 +98,27 @@ object ReceiptRenderer4K {
         }
         val bodyRight = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 36f
+            textSize = 35f
             color = darkText
             textAlign = Paint.Align.RIGHT
         }
         val bodyCenter = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 34f
+            textSize = 33f
             color = darkText
             textAlign = Paint.Align.CENTER
         }
         val redBoldCenter = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 40f
+            textSize = 38f
             color = crimson
             textAlign = Paint.Align.CENTER
         }
         val redBoldLeft = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 44f
+            textSize = 42f
             color = crimson
             textAlign = Paint.Align.LEFT
-        }
-        val mutedCenter = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = regularTf
-            textSize = 30f
-            color = slate
-            textAlign = Paint.Align.CENTER
         }
 
         val isPurchase = invoice.resolvedType == InvoiceType.PURCHASE
@@ -139,18 +130,21 @@ object ReceiptRenderer4K {
         val lineCount = maxOf(1, invoice.lines.size)
         val rowHeights = (0 until lineCount).map { idx ->
             val desc = invoice.lines.getOrNull(idx)?.description.orEmpty()
-            if (desc.isNotBlank()) 118f else 84f
+            if (desc.isNotBlank()) 88f else 60f
         }
         val rowsTotalHeight = rowHeights.sum()
-        val tableHeaderH = 78f
+        val tableHeaderH = 60f
         val showAccountingBreakdown = invoice.discount > 0.0 ||
             invoice.resolvedRemainingAmount > 0.0001 ||
             (invoice.paidAmount != null && kotlin.math.abs(invoice.resolvedPaidAmount - invoice.totalAmount) > 0.0001)
-        val summaryBoxH = if (showAccountingBreakdown) 174f else 112f
-        val notesH = if (invoice.notes.isNotBlank()) 76f else 0f
+        val mainSumH = 88f
+        val summaryBoxH = if (showAccountingBreakdown) 142f else mainSumH
+        val notesH = if (invoice.notes.isNotBlank()) 52f else 0f
 
-        val cardHeight = 406f + tableHeaderH + rowsTotalHeight + summaryBoxH + notesH + 220f
-        val totalHeight = (outerPad * 2 + cardHeight).toInt().coerceAtLeast(1380)
+        // Exact layout offsets from outerPad:
+        // topPad(30) + header(94) + divGap(22) + party(72) + divGap(20) + tableHeader(60) + rows + sumGap(18) + sumBox + notes + dottedGap(38) + policyGap(48) + bottomPad(28)
+        val cardHeight = 30f + 94f + 22f + 72f + 20f + tableHeaderH + rowsTotalHeight + summaryBoxH + 18f + notesH + 38f + 48f + 28f
+        val totalHeight = kotlin.math.ceil((outerPad * 2 + cardHeight).toDouble()).toInt()
 
         val bitmap = Bitmap.createBitmap(width, totalHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -172,10 +166,10 @@ object ReceiptRenderer4K {
         // Paper Card
         val cardRect = RectF(cardLeft, outerPad, cardRight, outerPad + cardHeight)
         fillPaint.color = Color.WHITE
-        canvas.drawRoundRect(cardRect, 44f, 44f, fillPaint)
-        canvas.drawRoundRect(cardRect, 44f, 44f, borderPaint)
+        canvas.drawRoundRect(cardRect, 36f, 36f, fillPaint)
+        canvas.drawRoundRect(cardRect, 36f, 36f, borderPaint)
 
-        var y = outerPad + 54f
+        var y = outerPad + 30f
 
         // 1. Header Row: Store Name + Phone (Right) | Circle Badge (Center) | Invoice Number & Date (Left)
         val rightStoreText = buildString {
@@ -185,80 +179,78 @@ object ReceiptRenderer4K {
                 append(settings.storePhone)
             }
         }
-        canvas.drawText(rightStoreText, innerRight, y + 66f, headerTextPaint)
+        canvas.drawText(rightStoreText, innerRight, y + 54f, headerTextPaint)
 
         // Top-left corner: Invoice number pill on top, Date underneath
-        val numPillRect = RectF(innerLeft, y - 4f, innerLeft + 240f, y + 58f)
-        canvas.drawRoundRect(numPillRect, 18f, 18f, Paint(borderPaint).apply { strokeWidth = 3.5f })
-        canvas.drawText(invoice.invoiceNumber.ifBlank { "0001" }, numPillRect.centerX(), numPillRect.centerY() + 13f, redBoldCenter)
-        canvas.drawText("الرقم:", numPillRect.right + 18f, y + 40f, TextPaint(headerLeftPaint).apply { textSize = 34f })
+        val numPillRect = RectF(innerLeft, y, innerLeft + 230f, y + 52f)
+        canvas.drawRoundRect(numPillRect, 16f, 16f, Paint(borderPaint).apply { strokeWidth = 3.5f })
+        canvas.drawText(invoice.invoiceNumber.ifBlank { "0001" }, numPillRect.centerX(), numPillRect.centerY() + 12f, redBoldCenter)
+        canvas.drawText("الرقم:", numPillRect.right + 16f, y + 36f, TextPaint(headerLeftPaint).apply { textSize = 33f })
         canvas.drawText(
             "التاريخ: $dateText",
             innerLeft,
-            y + 102f,
+            y + 84f,
             TextPaint(headerLeftPaint).apply {
                 typeface = boldTf
-                textSize = 31f
+                textSize = 29f
                 color = darkText
             }
         )
 
-        val badgeRadius = 46f
+        val badgeRadius = 40f
         fillPaint.color = navy
-        canvas.drawCircle(width / 2f, y + 52f, badgeRadius, fillPaint)
-        canvas.drawText(settings.storeBadgeText.ifBlank { "AZ" }, width / 2f, y + 65f, badgeTextPaint)
+        canvas.drawCircle(width / 2f, y + 44f, badgeRadius, fillPaint)
+        canvas.drawText(settings.storeBadgeText.ifBlank { "AZ" }, width / 2f, y + 56f, badgeTextPaint)
 
-        y += 126f
-        // Thin navy divider
+        y += 94f
         canvas.drawLine(innerLeft, y, innerRight, y, Paint(borderPaint).apply { strokeWidth = 3f })
-        y += 38f
+        y += 22f
 
-        // 2. Metadata Row 1: "المطلوب من الأخ/" + dotted customer field | "فاتورة بيع/شراء" pill + cash/credit radios
+        // 2. Metadata Row 1: "المطلوب من/" + dotted customer field | "فاتورة بيع/شراء" pill + cash/credit radios
         val pillWidth = 340f
-        val pillHeight = 64f
-        val radioTextPaint = TextPaint(bodyRight).apply { textSize = 32f }
+        val pillHeight = 56f
+        val radioTextPaint = TextPaint(bodyRight).apply { textSize = 31f }
 
         // Radios on the left
-        val creditCircleX = innerLeft + 22f
-        val radioCenterY = y + 32f
-        // Credit radio
-        canvas.drawCircle(creditCircleX, radioCenterY, 15f, Paint(borderPaint).apply { strokeWidth = 3f })
+        val creditCircleX = innerLeft + 20f
+        val radioCenterY = y + 28f
+        canvas.drawCircle(creditCircleX, radioCenterY, 14f, Paint(borderPaint).apply { strokeWidth = 3f })
         if (!isCash) {
             fillPaint.color = navy
-            canvas.drawCircle(creditCircleX, radioCenterY, 8f, fillPaint)
+            canvas.drawCircle(creditCircleX, radioCenterY, 7.5f, fillPaint)
         }
-        canvas.drawText("آجل", creditCircleX + 22f, radioCenterY + 11f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
+        canvas.drawText("آجل", creditCircleX + 20f, radioCenterY + 10f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
 
-        val cashCircleX = innerLeft + 132f
-        canvas.drawCircle(cashCircleX, radioCenterY, 15f, Paint(borderPaint).apply { strokeWidth = 3f })
+        val cashCircleX = innerLeft + 126f
+        canvas.drawCircle(cashCircleX, radioCenterY, 14f, Paint(borderPaint).apply { strokeWidth = 3f })
         if (isCash) {
             fillPaint.color = navy
-            canvas.drawCircle(cashCircleX, radioCenterY, 8f, fillPaint)
+            canvas.drawCircle(cashCircleX, radioCenterY, 7.5f, fillPaint)
         }
-        canvas.drawText("نقداً", cashCircleX + 22f, radioCenterY + 11f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
+        canvas.drawText("نقداً", cashCircleX + 20f, radioCenterY + 10f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
 
         // Invoice type dark navy pill
-        val typePillRect = RectF(innerLeft + 252f, y, innerLeft + 252f + pillWidth, y + pillHeight)
+        val typePillRect = RectF(innerLeft + 244f, y, innerLeft + 244f + pillWidth, y + pillHeight)
         fillPaint.color = navy
-        canvas.drawRoundRect(typePillRect, 20f, 20f, fillPaint)
-        canvas.drawText(typeLabel, typePillRect.centerX(), typePillRect.centerY() + 11f, TextPaint(badgeTextPaint).apply { textSize = 29f })
+        canvas.drawRoundRect(typePillRect, 18f, 18f, fillPaint)
+        canvas.drawText(typeLabel, typePillRect.centerX(), typePillRect.centerY() + 10f, TextPaint(badgeTextPaint).apply { textSize = 28f })
 
         // Customer / Supplier label & dotted line on right
         val labelRightText = if (isPurchase) "حساب المورد/" else "المطلوب من/"
-        canvas.drawText(labelRightText, innerRight, y + 44f, bodyRight)
-        val partyStartRight = innerRight - bodyRight.measureText(labelRightText) - 20f
-        val partyLineLeft = typePillRect.right + 24f
-        canvas.drawLine(partyLineLeft, y + 54f, partyStartRight, y + 54f, dottedPaint)
+        canvas.drawText(labelRightText, innerRight, y + 38f, bodyRight)
+        val partyStartRight = innerRight - bodyRight.measureText(labelRightText) - 18f
+        val partyLineLeft = typePillRect.right + 22f
+        canvas.drawLine(partyLineLeft, y + 48f, partyStartRight, y + 48f, dottedPaint)
         canvas.drawText(
             invoice.contactName.ifBlank { if (isPurchase) "مورد نقدي" else "عميل نقدي" },
             (partyLineLeft + partyStartRight) / 2f,
-            y + 42f,
-            TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 35f }
+            y + 38f,
+            TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 34f }
         )
 
-        y += 90f
+        y += 72f
         canvas.drawLine(innerLeft, y, innerRight, y, dottedPaint)
-        y += 32f
+        y += 20f
 
         // 4. 4-Column Bordered Table (RTL from Right: القيمة الإجمالية | الكمية | التفاصيل | سعر الواحدة faded)
         val colTotalW = 420f
@@ -270,47 +262,46 @@ object ReceiptRenderer4K {
         val xDetailsLeft = xUnitPriceLeft + colUnitPriceW
         val xQtyLeft = xDetailsLeft + colDetailsW
         val xTotalLeft = xQtyLeft + colQtyW
-        // xTotalLeft + colTotalW == innerRight
 
-        // Navy rounded-top header
         val headerRect = RectF(innerLeft, y, innerRight, y + tableHeaderH)
         fillPaint.color = navy
-        canvas.drawRoundRect(headerRect, 22f, 22f, fillPaint)
-        canvas.drawRect(innerLeft, y + tableHeaderH - 22f, innerRight, y + tableHeaderH, fillPaint)
+        canvas.drawRoundRect(headerRect, 18f, 18f, fillPaint)
+        canvas.drawRect(innerLeft, y + tableHeaderH - 18f, innerRight, y + tableHeaderH, fillPaint)
 
         val colWhitePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 36f
+            textSize = 34f
             color = Color.WHITE
             textAlign = Paint.Align.CENTER
         }
         val colFadedHeaderPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 27f
+            textSize = 26f
             color = Color.parseColor("#CBD5E1")
             alpha = 195
             textAlign = Paint.Align.CENTER
         }
         val headerDivPaint = Paint().apply { color = Color.parseColor("#64748B"); strokeWidth = 2.5f }
-        canvas.drawLine(xDetailsLeft, y + 10f, xDetailsLeft, y + tableHeaderH - 10f, headerDivPaint)
-        canvas.drawLine(xQtyLeft, y + 10f, xQtyLeft, y + tableHeaderH - 10f, headerDivPaint)
-        canvas.drawLine(xTotalLeft, y + 10f, xTotalLeft, y + tableHeaderH - 10f, headerDivPaint)
+        canvas.drawLine(xDetailsLeft, y + 8f, xDetailsLeft, y + tableHeaderH - 8f, headerDivPaint)
+        canvas.drawLine(xQtyLeft, y + 8f, xQtyLeft, y + tableHeaderH - 8f, headerDivPaint)
+        canvas.drawLine(xTotalLeft, y + 8f, xTotalLeft, y + tableHeaderH - 8f, headerDivPaint)
 
-        canvas.drawText("القيمة الإجمالية", xTotalLeft + colTotalW / 2f, y + 58f, colWhitePaint)
-        canvas.drawText("الكمية", xQtyLeft + colQtyW / 2f, y + 58f, colWhitePaint)
-        canvas.drawText("التفاصيــــــل", xDetailsLeft + colDetailsW / 2f, y + 58f, colWhitePaint)
-        canvas.drawText("سعر الواحدة", xUnitPriceLeft + colUnitPriceW / 2f, y + 56f, colFadedHeaderPaint)
+        val headerBaseline = y + tableHeaderH / 2f + 11f
+        canvas.drawText("القيمة الإجمالية", xTotalLeft + colTotalW / 2f, headerBaseline, colWhitePaint)
+        canvas.drawText("الكمية", xQtyLeft + colQtyW / 2f, headerBaseline, colWhitePaint)
+        canvas.drawText("التفاصيــــــل", xDetailsLeft + colDetailsW / 2f, headerBaseline, colWhitePaint)
+        canvas.drawText("سعر الواحدة", xUnitPriceLeft + colUnitPriceW / 2f, headerBaseline - 1f, colFadedHeaderPaint)
 
         y += tableHeaderH
 
-        val cellBorder = Paint(borderPaint).apply { strokeWidth = 3f }
+        val cellBorder = Paint(borderPaint).apply { strokeWidth = 2.8f }
         val fadedCellBorder = Paint(borderPaint).apply {
             strokeWidth = 2f
             color = Color.parseColor("#94A3B8")
         }
         val fadedValuePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 28f
+            textSize = 27f
             color = Color.parseColor("#94A3B8")
             textAlign = Paint.Align.CENTER
         }
@@ -321,7 +312,7 @@ object ReceiptRenderer4K {
         }
         val descRightPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 26f
+            textSize = 25f
             color = slate
             textAlign = Paint.Align.RIGHT
         }
@@ -336,7 +327,7 @@ object ReceiptRenderer4K {
             canvas.drawLine(xQtyLeft, y, xQtyLeft, rowBottom, cellBorder)
             canvas.drawLine(xTotalLeft, y, xTotalLeft, rowBottom, cellBorder)
 
-            val centerY = y + rowH / 2f + 12f
+            val centerY = y + rowH / 2f + 10f
             if (idx < lines.size) {
                 val line = lines[idx]
                 val inferredUnitPrice = if (line.unitQty > 0.0) line.lineTotal / line.unitQty else line.unitPrice
@@ -345,33 +336,33 @@ object ReceiptRenderer4K {
                     NumberFormatUtils.formatNumber(line.lineTotal),
                     xTotalLeft + colTotalW / 2f,
                     centerY,
-                    TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 36f; color = navy }
+                    TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 34f; color = navy }
                 )
                 canvas.drawText(
                     "${NumberFormatUtils.formatNumber(line.unitQty)} ${line.unitName}",
                     xQtyLeft + colQtyW / 2f,
                     centerY,
-                    TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 33f }
+                    TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 31f }
                 )
                 if (line.description.isNotBlank()) {
                     canvas.drawText(
                         "${idx + 1}. ${line.productName}",
-                        xQtyLeft - 24f,
-                        y + 46f,
-                        TextPaint(bodyRight).apply { textSize = 34f }
+                        xQtyLeft - 20f,
+                        y + 34f,
+                        TextPaint(bodyRight).apply { textSize = 32f }
                     )
                     canvas.drawText(
-                        line.description.take(48),
-                        xQtyLeft - 24f,
-                        y + 88f,
+                        line.description.take(54),
+                        xQtyLeft - 20f,
+                        y + 69f,
                         descRightPaint
                     )
                 } else {
                     canvas.drawText(
                         "${idx + 1}. ${line.productName}",
-                        xQtyLeft - 24f,
+                        xQtyLeft - 20f,
                         centerY,
-                        TextPaint(bodyRight).apply { textSize = 34f }
+                        TextPaint(bodyRight).apply { textSize = 32f }
                     )
                 }
                 canvas.drawText(
@@ -385,30 +376,29 @@ object ReceiptRenderer4K {
         }
 
         // 5. Totals Double Box ("الإجمالي الكلي" | "عدد الأصناف") + optional Discount / Paid / Remaining row
-        val mainSumH = 112f
         val mainSumBottom = y + mainSumH
         val sumBottom = y + summaryBoxH
         val midX = (innerLeft + innerRight) / 2f
         val sumRect = RectF(innerLeft, y, innerRight, sumBottom)
-        canvas.drawRoundRect(sumRect, 18f, 18f, cellBorder)
+        canvas.drawRoundRect(sumRect, 16f, 16f, cellBorder)
         canvas.drawLine(midX, y, midX, mainSumBottom, cellBorder)
 
-        val sumCenterY = y + mainSumH / 2f + 14f
+        val sumCenterY = y + mainSumH / 2f + 12f
         val totalLabel = if (invoice.discount > 0.0) "الصافي النهائي:" else "الإجمالي الكلي:"
-        canvas.drawText(totalLabel, innerRight - 28f, sumCenterY, TextPaint(bodyRight).apply { textSize = 42f; color = navy })
+        canvas.drawText(totalLabel, innerRight - 24f, sumCenterY, TextPaint(bodyRight).apply { textSize = 39f; color = navy })
         canvas.drawText(
             "${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال",
-            midX + 28f,
+            midX + 24f,
             sumCenterY,
             redBoldLeft
         )
 
-        canvas.drawText("عدد الأصناف:", midX - 28f, sumCenterY, TextPaint(bodyRight).apply { textSize = 40f; color = navy })
+        canvas.drawText("عدد الأصناف:", midX - 24f, sumCenterY, TextPaint(bodyRight).apply { textSize = 38f; color = navy })
         canvas.drawText(
             "${invoice.lines.size}",
-            innerLeft + 28f,
+            innerLeft + 24f,
             sumCenterY,
-            TextPaint(bodyCenter).apply { textAlign = Paint.Align.LEFT; typeface = boldTf; textSize = 42f }
+            TextPaint(bodyCenter).apply { textAlign = Paint.Align.LEFT; typeface = boldTf; textSize = 40f }
         )
 
         if (showAccountingBreakdown) {
@@ -424,36 +414,36 @@ object ReceiptRenderer4K {
             canvas.drawText(
                 detailParts,
                 width / 2f,
-                mainSumBottom + 42f,
-                TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 29f; color = navy }
+                mainSumBottom + 36f,
+                TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 28f; color = navy }
             )
         }
 
-        y = sumBottom + 28f
+        y = sumBottom + 18f
 
         if (invoice.notes.isNotBlank()) {
             canvas.drawText(
                 "ملاحظات: ${invoice.notes}",
                 innerRight,
-                y + 36f,
-                TextPaint(bodyRight).apply { textSize = 31f; typeface = regularTf; color = slate }
+                y + 28f,
+                TextPaint(bodyRight).apply { textSize = 29f; typeface = regularTf; color = slate }
             )
             y += notesH
         }
 
         canvas.drawLine(innerLeft, y, innerRight, y, dottedPaint)
-        y += 56f
+        y += 38f
 
         // 6. Footer Policy & Signatures
         canvas.drawText(
             settings.footerPolicy,
             width / 2f,
             y,
-            TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 32f; color = darkText }
+            TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 30f; color = darkText }
         )
-        y += 72f
+        y += 48f
 
-        val sigTextPaint = TextPaint(bodyRight).apply { textSize = 34f; color = navy }
+        val sigTextPaint = TextPaint(bodyRight).apply { textSize = 32f; color = navy }
         canvas.drawText("توقيع البائع: .............................", innerRight, y, sigTextPaint)
         canvas.drawText("توقيع المشتري: .............................", innerLeft, y, TextPaint(sigTextPaint).apply { textAlign = Paint.Align.LEFT })
 
@@ -473,7 +463,7 @@ object ReceiptRenderer4K {
         val settings = PrinterSettingsStore.load(context)
         val effectiveStoreName = storeName.ifBlank { settings.storeName }
         val width = WIDTH_4K_PX
-        val margin = 96f
+        val margin = 48f
 
         val regularTf = loadArabicTypeface(context, bold = false)
         val boldTf = loadArabicTypeface(context, bold = true)
@@ -484,97 +474,98 @@ object ReceiptRenderer4K {
 
         val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 62f
+            textSize = 56f
             color = Color.WHITE
             textAlign = Paint.Align.CENTER
         }
         val subtitlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 36f
+            textSize = 34f
             color = Color.parseColor("#E2E8F0")
             textAlign = Paint.Align.CENTER
         }
         val bodyRight = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 38f
+            textSize = 35f
             color = Color.parseColor("#0F172A")
             textAlign = Paint.Align.RIGHT
         }
         val boldLeft = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 38f
+            textSize = 35f
             color = Color.parseColor("#0F172A")
             textAlign = Paint.Align.LEFT
         }
         val mutedRight = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 32f
+            textSize = 30f
             color = slate
             textAlign = Paint.Align.RIGHT
         }
 
         val contactInvoices = invoices.filter { it.contactId == contact.id }.take(15)
         val contactPayments = payments.filter { it.contactId == contact.id }.take(15)
-        val rowsCount = maxOf(1, contactInvoices.size + contactPayments.size)
+        val totalRows = contactInvoices.size + contactPayments.size
+        val rowsBlockH = if (totalRows == 0) 76f else totalRows * 70f
 
-        val totalHeight = (880 + rowsCount * 105).coerceAtLeast(1400)
+        val totalHeight = kotlin.math.ceil((32f + 218f + 190f + 22f + rowsBlockH + 80f).toDouble()).toInt()
         val bitmap = Bitmap.createBitmap(width, totalHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
 
         val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        var y = 60f
+        var y = 32f
 
         fillPaint.color = navy
-        canvas.drawRoundRect(RectF(margin, y, width - margin, y + 260f), 32f, 32f, fillPaint)
-        canvas.drawText(effectiveStoreName, width / 2f, y + 108f, titlePaint)
+        canvas.drawRoundRect(RectF(margin, y, width - margin, y + 196f), 26f, 26f, fillPaint)
+        canvas.drawText(effectiveStoreName, width / 2f, y + 84f, titlePaint)
         val role = if (contact.resolvedType == ContactType.CUSTOMER) "كشف حساب عميل" else "كشف حساب مورد"
-        canvas.drawText("$role  •  ${contact.name}", width / 2f, y + 184f, subtitlePaint)
-        y += 304f
+        canvas.drawText("$role  •  ${contact.name}", width / 2f, y + 148f, subtitlePaint)
+        y += 218f
 
         fillPaint.color = Color.parseColor("#F1F5F9")
-        canvas.drawRoundRect(RectF(margin, y, width - margin, y + 210f), 28f, 28f, fillPaint)
-        val rightX = width - margin - 44f
-        val leftX = margin + 44f
-        canvas.drawText("الرصيد الحالي المستحق:", rightX, y + 84f, TextPaint(bodyRight).apply { typeface = boldTf; textSize = 44f; color = navy })
-        canvas.drawText("${NumberFormatUtils.formatNumber(contact.balance)} ريال", leftX, y + 90f, TextPaint(boldLeft).apply { textSize = 54f; color = crimson })
-        canvas.drawText("تاريخ الكشف: ${dateTimeFormatter.format(Date())}   ${if (contact.phone.isNotBlank()) "هاتف: ${contact.phone}" else ""}", rightX, y + 162f, mutedRight)
-        y += 260f
+        canvas.drawRoundRect(RectF(margin, y, width - margin, y + 154f), 22f, 22f, fillPaint)
+        val rightX = width - margin - 32f
+        val leftX = margin + 32f
+        canvas.drawText("الرصيد الحالي المستحق:", rightX, y + 66f, TextPaint(bodyRight).apply { typeface = boldTf; textSize = 40f; color = navy })
+        canvas.drawText("${NumberFormatUtils.formatNumber(contact.balance)} ريال", leftX, y + 70f, TextPaint(boldLeft).apply { textSize = 48f; color = crimson })
+        canvas.drawText("تاريخ الكشف: ${dateTimeFormatter.format(Date())}   ${if (contact.phone.isNotBlank()) "هاتف: ${contact.phone}" else ""}", rightX, y + 124f, mutedRight)
+        y += 190f
 
-        canvas.drawText("الحركات المسجلة", rightX, y, TextPaint(bodyRight).apply { typeface = boldTf; textSize = 42f; color = navy })
-        y += 30f
+        canvas.drawText("الحركات المسجلة", rightX, y, TextPaint(bodyRight).apply { typeface = boldTf; textSize = 38f; color = navy })
+        y += 22f
 
         if (contactInvoices.isEmpty() && contactPayments.isEmpty()) {
-            canvas.drawText("لا توجد فواتير أو سندات سداد مسجلة لهذا الحساب حتى الآن.", rightX, y + 70f, mutedRight)
+            canvas.drawText("لا توجد فواتير أو سندات سداد مسجلة لهذا الحساب حتى الآن.", rightX, y + 48f, mutedRight)
         } else {
             contactInvoices.forEach { inv ->
-                y += 16f
+                y += 8f
                 fillPaint.color = Color.parseColor("#F8FAFC")
-                canvas.drawRoundRect(RectF(margin, y, width - margin, y + 86f), 16f, 16f, fillPaint)
+                canvas.drawRoundRect(RectF(margin, y, width - margin, y + 62f), 14f, 14f, fillPaint)
                 val dt = dateTimeFormatter.format(inv.createdAt?.toDate() ?: Date())
                 val label = "${if (inv.resolvedType == InvoiceType.SALE) "فاتورة بيع" else "فاتورة شراء"} #${inv.invoiceNumber} ($dt)"
-                canvas.drawText(label, rightX, y + 54f, bodyRight)
-                canvas.drawText("+${NumberFormatUtils.formatNumber(inv.totalAmount)} ريال", leftX, y + 54f, boldLeft)
-                y += 88f
+                canvas.drawText(label, rightX, y + 42f, bodyRight)
+                canvas.drawText("+${NumberFormatUtils.formatNumber(inv.totalAmount)} ريال", leftX, y + 42f, boldLeft)
+                y += 62f
             }
             contactPayments.forEach { pay ->
-                y += 16f
+                y += 8f
                 fillPaint.color = Color.parseColor("#F0FDF4")
-                canvas.drawRoundRect(RectF(margin, y, width - margin, y + 86f), 16f, 16f, fillPaint)
+                canvas.drawRoundRect(RectF(margin, y, width - margin, y + 62f), 14f, 14f, fillPaint)
                 val dt = dateTimeFormatter.format(pay.createdAt?.toDate() ?: Date())
-                canvas.drawText("سند سداد ($dt) ${pay.notes}", rightX, y + 54f, bodyRight)
-                canvas.drawText("-${NumberFormatUtils.formatNumber(pay.amount)} ريال", leftX, y + 54f, TextPaint(boldLeft).apply { color = emerald })
-                y += 88f
+                canvas.drawText("سند سداد ($dt) ${pay.notes}", rightX, y + 42f, bodyRight)
+                canvas.drawText("-${NumberFormatUtils.formatNumber(pay.amount)} ريال", leftX, y + 42f, TextPaint(boldLeft).apply { color = emerald })
+                y += 62f
             }
         }
 
         val footerPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 30f
+            textSize = 28f
             color = slate
             textAlign = Paint.Align.CENTER
         }
-        canvas.drawText("${settings.footerPolicy} • كشف حساب 4K", width / 2f, (totalHeight - 50).toFloat(), footerPaint)
+        canvas.drawText("${settings.footerPolicy} • كشف حساب 4K", width / 2f, (totalHeight - 28).toFloat(), footerPaint)
         return bitmap
     }
 
@@ -592,69 +583,72 @@ object ReceiptRenderer4K {
         val settings = PrinterSettingsStore.load(context)
         val effectiveStoreName = storeName.ifBlank { settings.storeName }
         val scale = widthPx / 576f
-        val pad = (16f * scale).coerceAtLeast(8f)
+        val pad = (8f * scale).coerceAtLeast(4f)
         val contentWidth = (widthPx - pad * 2).toInt().coerceAtLeast(100)
         val regularTf = loadArabicTypeface(context, bold = false)
         val boldTf = loadArabicTypeface(context, bold = true)
 
         val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = (30f * scale).coerceAtLeast(21f)
+            textSize = (28f * scale).coerceAtLeast(19f)
             color = Color.BLACK
             textAlign = Paint.Align.CENTER
         }
         val subCenterPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = (18f * scale).coerceAtLeast(13f)
+            textSize = (17f * scale).coerceAtLeast(12f)
             color = Color.BLACK
             textAlign = Paint.Align.CENTER
         }
         val boldCenter = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = (20f * scale).coerceAtLeast(15f)
+            textSize = (18f * scale).coerceAtLeast(13f)
             color = Color.BLACK
             textAlign = Paint.Align.CENTER
         }
         val rightPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = (19f * scale).coerceAtLeast(14f)
+            textSize = (18f * scale).coerceAtLeast(13f)
             color = Color.BLACK
             textAlign = Paint.Align.RIGHT
         }
         val rightBoldPaint = TextPaint(rightPaint).apply {
             typeface = boldTf
-            textSize = (20f * scale).coerceAtLeast(15f)
+            textSize = (19f * scale).coerceAtLeast(14f)
         }
         val leftPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = (18f * scale).coerceAtLeast(13f)
+            textSize = (17f * scale).coerceAtLeast(12f)
             color = Color.BLACK
             textAlign = Paint.Align.LEFT
         }
         val leftBoldPaint = TextPaint(leftPaint).apply {
             typeface = boldTf
-            textSize = (20f * scale).coerceAtLeast(15f)
+            textSize = (18f * scale).coerceAtLeast(13f)
         }
         val centerCellPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = (18f * scale).coerceAtLeast(13f)
+            textSize = (17f * scale).coerceAtLeast(12f)
             color = Color.BLACK
             textAlign = Paint.Align.CENTER
         }
+        val totalRightLabelPaint = TextPaint(rightBoldPaint).apply {
+            textSize = (21f * scale).coerceAtLeast(15f)
+        }
         val totalPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = (26f * scale).coerceAtLeast(19f)
+            textSize = (23f * scale).coerceAtLeast(17f)
             color = Color.BLACK
             textAlign = Paint.Align.LEFT
         }
         val rtlWrapPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = (19f * scale).coerceAtLeast(14f)
+            textSize = (18f * scale).coerceAtLeast(13f)
             color = Color.BLACK
         }
         val smallWrapPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = (16f * scale).coerceAtLeast(12f)
+            textSize = (15f * scale).coerceAtLeast(11f)
             color = Color.BLACK
         }
 
@@ -667,39 +661,43 @@ object ReceiptRenderer4K {
         } else {
             dateTimeFormatter.format(invoice.createdAt?.toDate() ?: Date())
         }
-        val partyPrefix = if (isPurchase) "حساب المورد/" else "المطلوب من الأخ/"
+        val partyPrefix = if (isPurchase) "حساب المورد/" else "المطلوب من/"
         val partyName = invoice.contactName.ifBlank { if (isPurchase) "مورد نقدي" else "عميل نقدي" }
 
         // Column widths inside contentWidth (RTL: Total Left | Qty Mid | Name Right)
-        val colTotalW = (contentWidth * 0.25f)
-        val colQtyW = (contentWidth * 0.23f)
+        val colTotalW = contentWidth * 0.25f
+        val colQtyW = contentWidth * 0.21f
         val colNameW = (contentWidth - colTotalW - colQtyW).toInt().coerceAtLeast(80)
 
         val itemLayouts = invoice.lines.mapIndexed { idx, line ->
             val inferred = if (line.unitQty > 0.0) line.lineTotal / line.unitQty else line.unitPrice
             val titleText = "${idx + 1}. ${line.productName}"
             val nameLayout = StaticLayout.Builder
-                .obtain(titleText, 0, titleText.length, rtlWrapPaint, colNameW - 8)
+                .obtain(titleText, 0, titleText.length, rtlWrapPaint, colNameW - 6)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setLineSpacing(0f, 0.88f)
                 .setIncludePad(false)
                 .build()
-            val descPart = if (line.description.isNotBlank()) "${line.description}\n" else ""
-            val subText = "${descPart}الواحدة: ${NumberFormatUtils.formatNumber(inferred)} | ${NumberFormatUtils.formatNumber(line.unitQty)} ${line.unitName}"
+            val descPart = if (line.description.isNotBlank()) "${line.description} | " else ""
+            val subText = "${descPart}${line.unitName} × ${NumberFormatUtils.formatNumber(inferred)}"
             val subLayout = StaticLayout.Builder
-                .obtain(subText, 0, subText.length, smallWrapPaint, colNameW - 8)
+                .obtain(subText, 0, subText.length, smallWrapPaint, colNameW - 6)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setLineSpacing(0f, 0.88f)
                 .setIncludePad(false)
                 .build()
             val blockHeight = maxOf(
-                nameLayout.height + subLayout.height + (16f * scale).toInt(),
-                (48f * scale).toInt()
+                nameLayout.height + subLayout.height + (4f * scale).toInt(),
+                (28f * scale).toInt()
             )
             Triple(nameLayout, subLayout, blockHeight)
         }
 
+        val partyFullText = "$partyPrefix $partyName"
         val partyLayout = StaticLayout.Builder
-            .obtain("$partyPrefix $partyName", 0, "$partyPrefix $partyName".length, rtlWrapPaint, contentWidth)
+            .obtain(partyFullText, 0, partyFullText.length, rtlWrapPaint, contentWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setLineSpacing(0f, 0.88f)
             .setIncludePad(false)
             .build()
 
@@ -708,6 +706,7 @@ object ReceiptRenderer4K {
             StaticLayout.Builder
                 .obtain(txt, 0, txt.length, smallWrapPaint, contentWidth)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                .setLineSpacing(0f, 0.88f)
                 .setIncludePad(false)
                 .build()
         } else null
@@ -715,6 +714,7 @@ object ReceiptRenderer4K {
         val footerLayout = StaticLayout.Builder
             .obtain(settings.footerPolicy, 0, settings.footerPolicy.length, smallWrapPaint, contentWidth)
             .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .setLineSpacing(0f, 0.88f)
             .setIncludePad(false)
             .build()
 
@@ -722,34 +722,108 @@ object ReceiptRenderer4K {
         val showPaymentRows = showDiscountRows ||
             invoice.resolvedRemainingAmount > 0.0001 ||
             (invoice.paidAmount != null && kotlin.math.abs(invoice.resolvedPaidAmount - invoice.totalAmount) > 0.0001)
-        val extraTotalsRows = (if (showDiscountRows) 2 else 0) + (if (showPaymentRows) 2 else 0)
 
-        val headerBlockH = (if (settings.storePhone.isNotBlank()) 136f else 108f) * scale
-        val metaBlockH = (50f * scale) + partyLayout.height + (22f * scale)
-        val tableHeaderH = (36f * scale).coerceAtLeast(28f)
-        val itemsTotalH = itemLayouts.sumOf { it.third }.toFloat().coerceAtLeast(48f * scale)
-        val totalsBlockH = ((92f + extraTotalsRows * 26f) * scale)
-        val notesH = notesLayout?.let { it.height + 16f * scale } ?: 0f
-        val footerH = footerLayout.height + (44f * scale)
+        // Single-pass exact Y coordinate measurement so zero empty tail paper is wasted
+        var cursorY = 4f * scale
 
-        val totalHeight = (headerBlockH + metaBlockH + tableHeaderH + itemsTotalH + totalsBlockH + notesH + footerH)
-            .toInt()
-            .coerceAtLeast(380)
+        val titleFm = titlePaint.fontMetrics
+        val storeNameBaselineY = cursorY - titleFm.ascent
+        cursorY += (titleFm.descent - titleFm.ascent) * 0.86f + (1f * scale)
 
+        val phoneBaselineY: Float? = if (settings.storePhone.isNotBlank()) {
+            val phoneFm = subCenterPaint.fontMetrics
+            val base = cursorY - phoneFm.ascent
+            cursorY += (phoneFm.descent - phoneFm.ascent) * 0.86f + (2f * scale)
+            base
+        } else null
+
+        val badgeH = (26f * scale).coerceAtLeast(21f)
+        val badgeTop = cursorY
+        val badgeBottom = badgeTop + badgeH
+        cursorY = badgeBottom + (5f * scale)
+
+        val topDividerY = cursorY
+        cursorY += (4f * scale)
+
+        val metaFm = rightBoldPaint.fontMetrics
+        val numDateBaselineY = cursorY - metaFm.ascent
+        cursorY += (metaFm.descent - metaFm.ascent) * 0.88f + (2f * scale)
+
+        val partyTopY = cursorY
+        cursorY += partyLayout.height + (4f * scale)
+
+        val tableHeaderTop = cursorY
+        val tableHeaderH = (27f * scale).coerceAtLeast(21f)
+        val tableHeaderBottom = tableHeaderTop + tableHeaderH
+        cursorY = tableHeaderBottom + (2f * scale)
+
+        val itemTops = ArrayList<Float>(itemLayouts.size)
+        itemLayouts.forEach { (_, _, blockH) ->
+            itemTops.add(cursorY)
+            cursorY += blockH + (2f * scale)
+        }
+        if (itemLayouts.isEmpty()) {
+            cursorY += 16f * scale
+        }
+
+        val totalsDividerY = cursorY
+        cursorY += (4f * scale)
+
+        val regFm = rightPaint.fontMetrics
+        val regRowH = (regFm.descent - regFm.ascent) * 0.88f + (2f * scale)
+        val totFm = totalPaint.fontMetrics
+        val totRowH = (totFm.descent - totFm.ascent) * 0.88f + (3f * scale)
+
+        var subtotalBaselineY = 0f
+        var discountBaselineY = 0f
+        if (showDiscountRows) {
+            subtotalBaselineY = cursorY - regFm.ascent
+            cursorY += regRowH
+            discountBaselineY = cursorY - regFm.ascent
+            cursorY += regRowH
+        }
+
+        val netTotalBaselineY = cursorY - totFm.ascent
+        cursorY += totRowH
+
+        var paidBaselineY = 0f
+        var remainingBaselineY = 0f
+        if (showPaymentRows) {
+            paidBaselineY = cursorY - regFm.ascent
+            cursorY += regRowH
+            remainingBaselineY = cursorY - regFm.ascent
+            cursorY += regRowH
+        }
+
+        val itemCountBaselineY = cursorY - regFm.ascent
+        cursorY += regRowH + (2f * scale)
+
+        val bottomTotalsDividerY = cursorY
+        cursorY += (4f * scale)
+
+        val notesTopY = cursorY
+        if (notesLayout != null) {
+            cursorY += notesLayout.height + (4f * scale)
+        }
+
+        val footerTopY = cursorY
+        cursorY += footerLayout.height + (6f * scale)
+
+        val totalHeight = kotlin.math.ceil(cursorY.toDouble()).toInt().coerceAtLeast(180)
         val bitmap = Bitmap.createBitmap(widthPx, totalHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
 
         val solidLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
-            strokeWidth = (2.5f * scale).coerceAtLeast(2f)
+            strokeWidth = (2.2f * scale).coerceAtLeast(1.6f)
             style = Paint.Style.STROKE
         }
         val dashedLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
-            strokeWidth = (1.6f * scale).coerceAtLeast(1.2f)
+            strokeWidth = (1.4f * scale).coerceAtLeast(1f)
             style = Paint.Style.STROKE
-            pathEffect = DashPathEffect(floatArrayOf(6f * scale, 5f * scale), 0f)
+            pathEffect = DashPathEffect(floatArrayOf(5f * scale, 4f * scale), 0f)
         }
         val fillBlackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.BLACK
@@ -760,138 +834,105 @@ object ReceiptRenderer4K {
         val leftX = pad
 
         // 1. Store Name + Phone + Type Badge
-        var y = 34f * scale
-        canvas.drawText(effectiveStoreName, widthPx / 2f, y, titlePaint)
-        y += 28f * scale
-        if (settings.storePhone.isNotBlank()) {
-            canvas.drawText("هاتف: ${settings.storePhone}", widthPx / 2f, y, subCenterPaint)
-            y += 26f * scale
+        canvas.drawText(effectiveStoreName, widthPx / 2f, storeNameBaselineY, titlePaint)
+        if (phoneBaselineY != null) {
+            canvas.drawText("هاتف: ${settings.storePhone}", widthPx / 2f, phoneBaselineY, subCenterPaint)
         }
 
-        val badgeW = (contentWidth * 0.78f).coerceAtLeast(180f)
-        val badgeH = (34f * scale).coerceAtLeast(26f)
-        val badgeRect = RectF(
-            (widthPx - badgeW) / 2f,
-            y - (4f * scale),
-            (widthPx + badgeW) / 2f,
-            y - (4f * scale) + badgeH
-        )
-        canvas.drawRoundRect(badgeRect, 10f * scale, 10f * scale, solidLinePaint)
-        canvas.drawText("$typeText • $payText", widthPx / 2f, badgeRect.centerY() + (7f * scale), boldCenter)
-        y = badgeRect.bottom + (14f * scale)
+        val badgeW = (contentWidth * 0.84f).coerceAtLeast(180f)
+        val badgeRect = RectF((widthPx - badgeW) / 2f, badgeTop, (widthPx + badgeW) / 2f, badgeBottom)
+        canvas.drawRoundRect(badgeRect, 8f * scale, 8f * scale, solidLinePaint)
+        val badgeFm = boldCenter.fontMetrics
+        val badgeTextBaseline = badgeRect.centerY() - (badgeFm.ascent + badgeFm.descent) / 2f
+        canvas.drawText("$typeText • $payText", widthPx / 2f, badgeTextBaseline, boldCenter)
 
-        canvas.drawLine(leftX, y, rightX, y, solidLinePaint)
-        y += 24f * scale
+        canvas.drawLine(leftX, topDividerY, rightX, topDividerY, solidLinePaint)
 
         // 2. Invoice Number & Date + Party Name
-        canvas.drawText("الرقم: ${invoice.invoiceNumber.ifBlank { "0001" }}", rightX, y, rightBoldPaint)
-        canvas.drawText(dateText, leftX, y, leftPaint)
-        y += 14f * scale
+        canvas.drawText("الرقم: ${invoice.invoiceNumber.ifBlank { "0001" }}", rightX, numDateBaselineY, rightBoldPaint)
+        canvas.drawText(dateText, leftX, numDateBaselineY, leftPaint)
 
         canvas.save()
-        canvas.translate(leftX, y)
+        canvas.translate(leftX, partyTopY)
         partyLayout.draw(canvas)
         canvas.restore()
-        y += partyLayout.height + (10f * scale)
 
         // 3. Inverted Black POS Table Header (القيمة | الكمية | الصنف)
-        val headerTop = y
-        val headerBottom = y + tableHeaderH
-        canvas.drawRect(leftX, headerTop, rightX, headerBottom, fillBlackPaint)
+        canvas.drawRect(leftX, tableHeaderTop, rightX, tableHeaderBottom, fillBlackPaint)
 
         val colHeaderWhite = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = (18f * scale).coerceAtLeast(13f)
+            textSize = (17f * scale).coerceAtLeast(12f)
             color = Color.WHITE
             textAlign = Paint.Align.CENTER
         }
         val xTotalCenter = leftX + colTotalW / 2f
         val xQtyCenter = leftX + colTotalW + colQtyW / 2f
         val xNameCenter = leftX + colTotalW + colQtyW + colNameW / 2f
-        val headerBaseY = headerTop + tableHeaderH / 2f + (6f * scale)
+        val hdrFm = colHeaderWhite.fontMetrics
+        val headerBaseY = (tableHeaderTop + tableHeaderBottom) / 2f - (hdrFm.ascent + hdrFm.descent) / 2f
 
         canvas.drawText("القيمة", xTotalCenter, headerBaseY, colHeaderWhite)
         canvas.drawText("الكمية", xQtyCenter, headerBaseY, colHeaderWhite)
         canvas.drawText("الصنف والتفاصيل", xNameCenter, headerBaseY, colHeaderWhite)
-        y = headerBottom + (6f * scale)
 
-        // 4. Structured Items Rows
+        // 4. Structured Items Rows (tightly packed)
         val xColNameLeft = leftX + colTotalW + colQtyW
+        val cellFm = centerCellPaint.fontMetrics
+        val totalCellPaint = TextPaint(centerCellPaint).apply { textSize = (18f * scale).coerceAtLeast(13f) }
         invoice.lines.forEachIndexed { idx, line ->
             val (nameLayout, subLayout, blockH) = itemLayouts[idx]
-            val rowTop = y
+            val rowTop = itemTops[idx]
 
-            // Product name + unit-price subline on right
             canvas.save()
-            canvas.translate(xColNameLeft + 4f, rowTop + (4f * scale))
+            canvas.translate(xColNameLeft + 3f, rowTop + (1f * scale))
             nameLayout.draw(canvas)
-            canvas.translate(0f, nameLayout.height.toFloat() + (2f * scale))
+            canvas.translate(0f, nameLayout.height.toFloat() + (1f * scale))
             subLayout.draw(canvas)
             canvas.restore()
 
-            val valY = rowTop + blockH / 2f + (5f * scale)
-            canvas.drawText(
-                NumberFormatUtils.formatNumber(line.unitQty),
-                xQtyCenter,
-                valY,
-                centerCellPaint
-            )
-            canvas.drawText(
-                NumberFormatUtils.formatNumber(line.lineTotal),
-                xTotalCenter,
-                valY,
-                TextPaint(centerCellPaint).apply { textSize = (19f * scale).coerceAtLeast(14f) }
-            )
+            val valY = rowTop + blockH / 2f - (cellFm.ascent + cellFm.descent) / 2f
+            canvas.drawText(NumberFormatUtils.formatNumber(line.unitQty), xQtyCenter, valY, centerCellPaint)
+            canvas.drawText(NumberFormatUtils.formatNumber(line.lineTotal), xTotalCenter, valY, totalCellPaint)
 
-            y += blockH
-            canvas.drawLine(leftX, y, rightX, y, dashedLinePaint)
-            y += (4f * scale)
+            val divY = rowTop + blockH
+            canvas.drawLine(leftX, divY, rightX, divY, dashedLinePaint)
         }
 
         // 5. Totals Box
-        y += (4f * scale)
-        canvas.drawLine(leftX, y, rightX, y, solidLinePaint)
-        y += (26f * scale)
+        canvas.drawLine(leftX, totalsDividerY, rightX, totalsDividerY, solidLinePaint)
 
         if (showDiscountRows) {
-            canvas.drawText("قبل الخصم:", rightX, y, rightPaint)
-            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.subtotalAmount)} ريال", leftX, y, leftPaint)
-            y += (24f * scale)
-            canvas.drawText("الخصم:", rightX, y, rightPaint)
-            canvas.drawText("-${NumberFormatUtils.formatNumber(invoice.discount)} ريال", leftX, y, leftPaint)
-            y += (26f * scale)
+            canvas.drawText("قبل الخصم:", rightX, subtotalBaselineY, rightPaint)
+            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.subtotalAmount)} ريال", leftX, subtotalBaselineY, leftPaint)
+            canvas.drawText("الخصم:", rightX, discountBaselineY, rightPaint)
+            canvas.drawText("-${NumberFormatUtils.formatNumber(invoice.discount)} ريال", leftX, discountBaselineY, leftPaint)
         }
 
-        canvas.drawText(if (showDiscountRows) "الصافي الكلي:" else "الإجمالي الكلي:", rightX, y, TextPaint(rightBoldPaint).apply { textSize = (23f * scale).coerceAtLeast(17f) })
-        canvas.drawText("${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال", leftX, y, totalPaint)
-        y += (26f * scale)
+        canvas.drawText(if (showDiscountRows) "الصافي الكلي:" else "الإجمالي الكلي:", rightX, netTotalBaselineY, totalRightLabelPaint)
+        canvas.drawText("${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال", leftX, netTotalBaselineY, totalPaint)
 
         if (showPaymentRows) {
-            canvas.drawText("المدفوع:", rightX, y, rightPaint)
-            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.resolvedPaidAmount)} ريال", leftX, y, leftBoldPaint)
-            y += (24f * scale)
-            canvas.drawText("المتبقي:", rightX, y, rightBoldPaint)
-            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.resolvedRemainingAmount)} ريال", leftX, y, leftBoldPaint)
-            y += (26f * scale)
+            canvas.drawText("المدفوع:", rightX, paidBaselineY, rightPaint)
+            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.resolvedPaidAmount)} ريال", leftX, paidBaselineY, leftBoldPaint)
+            canvas.drawText("المتبقي:", rightX, remainingBaselineY, rightBoldPaint)
+            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.resolvedRemainingAmount)} ريال", leftX, remainingBaselineY, leftBoldPaint)
         }
 
-        canvas.drawText("عدد الأصناف:", rightX, y, rightPaint)
-        canvas.drawText("${invoice.lines.size}", leftX, y, leftBoldPaint)
-        y += (14f * scale)
-        canvas.drawLine(leftX, y, rightX, y, solidLinePaint)
-        y += (16f * scale)
+        canvas.drawText("عدد الأصناف:", rightX, itemCountBaselineY, rightPaint)
+        canvas.drawText("${invoice.lines.size}", leftX, itemCountBaselineY, leftBoldPaint)
+        canvas.drawLine(leftX, bottomTotalsDividerY, rightX, bottomTotalsDividerY, solidLinePaint)
 
         // 6. Notes & Policy Footer
         if (notesLayout != null) {
             canvas.save()
-            canvas.translate(leftX, y)
+            canvas.translate(leftX, notesTopY)
             notesLayout.draw(canvas)
             canvas.restore()
-            y += notesLayout.height + (12f * scale)
         }
 
         canvas.save()
-        canvas.translate(leftX, y)
+        canvas.translate(leftX, footerTopY)
         footerLayout.draw(canvas)
         canvas.restore()
 
@@ -929,10 +970,11 @@ object ReceiptRenderer4K {
         val bitmap4K = renderInvoiceReceipt4K(context, invoice, storeName)
         val doc = PdfDocument()
         val pageWidth = 1240
-        val scaledH = (bitmap4K.height * (pageWidth.toFloat() / bitmap4K.width)).toInt().coerceAtLeast(1754)
+        val drawHeight = bitmap4K.height * (pageWidth.toFloat() / bitmap4K.width)
+        val scaledH = drawHeight.toInt().coerceAtLeast(240)
         val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, scaledH, 1).create()
         val page = doc.startPage(pageInfo)
-        val destRect = RectF(0f, 0f, pageWidth.toFloat(), (bitmap4K.height * (pageWidth.toFloat() / bitmap4K.width)))
+        val destRect = RectF(0f, 0f, pageWidth.toFloat(), drawHeight)
         page.canvas.drawColor(Color.WHITE)
         page.canvas.drawBitmap(bitmap4K, null, destRect, Paint(Paint.FILTER_BITMAP_FLAG))
         doc.finishPage(page)
@@ -957,53 +999,58 @@ object ReceiptRenderer4K {
         val boldTf = loadArabicTypeface(context, bold = true)
         val doc = PdfDocument()
         val pageWidth = 1240
-        val pageHeight = 1754
-        val margin = 56f
+        val maxPageHeight = 1754
+        val margin = 36f
 
         val headerPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 34f
+            textSize = 31f
             color = Color.parseColor("#132C4A")
             textAlign = Paint.Align.RIGHT
         }
         val rowPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 22f
+            textSize = 20f
             color = Color.BLACK
             textAlign = Paint.Align.RIGHT
         }
         val leftPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = boldTf
-            textSize = 22f
+            textSize = 20f
             color = Color.parseColor("#15803D")
             textAlign = Paint.Align.LEFT
         }
         val mutedPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = regularTf
-            textSize = 18f
+            textSize = 17f
             color = Color.parseColor("#475569")
             textAlign = Paint.Align.RIGHT
         }
         val divider = Paint().apply {
             color = Color.parseColor("#CBD5E1")
-            strokeWidth = 1.5f
+            strokeWidth = 1.2f
         }
 
-        val itemsPerPage = 18
+        val itemsPerPage = 28
         val chunks = if (products.isEmpty()) listOf(emptyList()) else products.chunked(itemsPerPage)
 
         chunks.forEachIndexed { pageIndex, chunk ->
-            val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageIndex + 1).create()
+            val estimatedPageH = if (chunks.size == 1) {
+                (148 + maxOf(1, chunk.size) * 56 + 32).coerceIn(260, maxPageHeight)
+            } else {
+                maxPageHeight
+            }
+            val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, estimatedPageH, pageIndex + 1).create()
             val page = doc.startPage(pageInfo)
             val canvas = page.canvas
             canvas.drawColor(Color.WHITE)
 
-            var y = 78f
+            var y = 52f
             val rightX = pageWidth - margin
             val leftX = margin
 
             canvas.drawText("$storeName - تقرير جرد المخزون وتكلفة الوحدات", rightX, y, headerPaint)
-            y += 32f
+            y += 26f
             val totalValue = products.sumOf { it.stockBaseQty * it.baseCost }
             canvas.drawText(
                 "التاريخ: ${dateTimeFormatter.format(Date())}  |  الأصناف: ${products.size}  |  إجمالي قيمة المخزون: ${NumberFormatUtils.formatNumber(totalValue)} ريال  |  صفحة ${pageIndex + 1}/${chunks.size}",
@@ -1011,12 +1058,12 @@ object ReceiptRenderer4K {
                 y,
                 mutedPaint
             )
-            y += 20f
+            y += 14f
             canvas.drawLine(margin, y, pageWidth - margin, y, divider)
-            y += 36f
+            y += 26f
 
             if (chunk.isEmpty()) {
-                canvas.drawText("لا توجد أصناف مسجلة في المخزون.", rightX, y + 30f, rowPaint)
+                canvas.drawText("لا توجد أصناف مسجلة في المخزون.", rightX, y + 24f, rowPaint)
             } else {
                 chunk.forEach { p ->
                     val largeUnit = p.unitTiers.lastOrNull()
@@ -1037,16 +1084,16 @@ object ReceiptRenderer4K {
                         y,
                         leftPaint
                     )
-                    y += 18f
+                    y += 21f
                     canvas.drawText(
                         "سعر البيع الأساسي: ${NumberFormatUtils.formatNumber(p.baseSellPrice)} ريال${if (p.barcode.isNotBlank()) " | باركود: ${p.barcode}" else ""}",
                         rightX,
-                        y + 20f,
+                        y,
                         mutedPaint
                     )
-                    y += 34f
+                    y += 11f
                     canvas.drawLine(margin, y, pageWidth - margin, y, divider)
-                    y += 32f
+                    y += 22f
                 }
             }
             doc.finishPage(page)

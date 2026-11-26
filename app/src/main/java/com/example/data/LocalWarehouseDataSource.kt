@@ -27,11 +27,13 @@ import java.util.Date
 import java.util.UUID
 
 class LocalWarehouseDataSource internal constructor(
-    private val storageFile: File?
+    private val storageFile: File?,
+    private val encodeBackup: (BackupBundle) -> String = BackupJsonCodec::encode,
+    private val decodeBackup: (String) -> BackupBundle = BackupJsonCodec::decode
 ) : WarehouseDataSource {
 
     constructor(context: Context) : this(
-        File(context.applicationContext.filesDir, "warehouse_local_db.json")
+        storageFile = File(context.applicationContext.filesDir, "warehouse_local_db.json")
     )
 
     override val isCloudBacked: Boolean = false
@@ -739,17 +741,23 @@ class LocalWarehouseDataSource internal constructor(
 
     private fun loadFromDisk() {
         val file = storageFile ?: return
-        if (!file.exists()) return
-        try {
-            val raw = file.readText(Charsets.UTF_8)
-            if (raw.isBlank()) return
-            val bundle = BackupJsonCodec.decode(raw)
-            productsFlow.value = bundle.products
-            contactsFlow.value = bundle.contacts
-            invoicesFlow.value = bundle.invoices
-            paymentsFlow.value = bundle.payments
-        } catch (_: Exception) {
-            // Keep empty safe defaults if corrupted
+        val parent = file.parentFile
+        val backupFile = parent?.let { File(it, "${file.name}.bak") }
+        val candidates = listOfNotNull(file, backupFile)
+        for (candidate in candidates) {
+            if (!candidate.exists()) continue
+            try {
+                val raw = candidate.readText(Charsets.UTF_8)
+                if (raw.isBlank()) continue
+                val bundle = decodeBackup(raw)
+                productsFlow.value = bundle.products
+                contactsFlow.value = bundle.contacts
+                invoicesFlow.value = bundle.invoices
+                paymentsFlow.value = bundle.payments
+                return
+            } catch (_: Exception) {
+                // Fall back to rolling backup file if primary JSON is truncated/corrupted
+            }
         }
     }
 
@@ -764,9 +772,17 @@ class LocalWarehouseDataSource internal constructor(
             invoices = invoicesFlow.value,
             payments = paymentsFlow.value
         )
-        val tmp = File(parent, "warehouse_local_db.json.tmp")
-        tmp.writeText(BackupJsonCodec.encode(bundle), Charsets.UTF_8)
-        tmp.renameTo(file)
+        val encoded = encodeBackup(bundle)
+        val tmp = File(parent, "${file.name}.tmp")
+        tmp.writeText(encoded, Charsets.UTF_8)
+        if (file.exists()) {
+            val backupFile = File(parent, "${file.name}.bak")
+            runCatching { file.copyTo(backupFile, overwrite = true) }
+        }
+        if (!tmp.renameTo(file)) {
+            file.writeText(encoded, Charsets.UTF_8)
+            tmp.delete()
+        }
     }
 }
 

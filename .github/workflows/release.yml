@@ -31,10 +31,30 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Run Unit Tests
-        run: gradle testDebugUnitTest
+        run: gradle --no-configuration-cache testDebugUnitTest
+
+      - name: Prepare Android Debug Signing Key
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          if [ -n "${ANDROID_DEBUG_KEYSTORE_BASE64}" ]; then
+            echo "${ANDROID_DEBUG_KEYSTORE_BASE64}" | base64 -d > debug.keystore
+          elif [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000
+          fi
+          test -s debug.keystore
 
       - name: Build APK
-        run: gradle assembleDebug
+        run: gradle --no-configuration-cache assembleDebug
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -20,14 +20,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Login
-import androidx.compose.material.icons.automirrored.filled.ReceiptLong
-import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.Calculate
-import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Button
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -118,7 +112,7 @@ fun AuthScreen(
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Inventory2,
+                    imageVector = AppIcons.Inventory2,
                     contentDescription = "شعار حسابات المخزن",
                     tint = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.size(34.dp)
@@ -153,17 +147,17 @@ fun AuthScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     FeatureRow(
-                        icon = Icons.Filled.Calculate,
+                        icon = AppIcons.Calculate,
                         title = "حساب تلقائي لتكلفة الوحدة الأصغر",
                         subtitle = "أدخل سعر الكرتون أو القرطاس ليُحسب سعر الحبة لحظيًا مع منع التكرار"
                     )
                     FeatureRow(
-                        icon = Icons.AutoMirrored.Filled.ReceiptLong,
+                        icon = AppIcons.ReceiptLong,
                         title = "إيصالات 4K وطباعة حرارية ومشاركة واتساب",
                         subtitle = "مشاركة الإيصال كصورة عالية الدقة 4K وطباعة بلوتوث أو شبكة 58/80 مم"
                     )
                     FeatureRow(
-                        icon = Icons.Filled.AccountBalanceWallet,
+                        icon = AppIcons.AccountBalanceWallet,
                         title = "نسخ احتياطي واستعادة وحسابات العملاء",
                         subtitle = "استخدام محلي كامل أو ربط اختياري بحساب Google للمزامنة السحابية"
                     )
@@ -193,7 +187,7 @@ fun AuthScreen(
                             .testTag("continue_local_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.PhoneAndroid,
+                            imageVector = AppIcons.PhoneAndroid,
                             contentDescription = null,
                             modifier = Modifier.size(18.dp)
                         )
@@ -264,7 +258,7 @@ fun AuthScreen(
                             )
                         } else {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Login,
+                                imageVector = AppIcons.Login,
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
                             )

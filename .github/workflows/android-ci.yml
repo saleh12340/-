@@ -60,9 +60,13 @@ jobs:
           retention-days: 7
 
       - name: Prepare Android Debug Signing Key
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         shell: bash
         run: |
-          if [ ! -f debug.keystore ]; then
+          if [ -n "${ANDROID_DEBUG_KEYSTORE_BASE64}" ]; then
+            echo "${ANDROID_DEBUG_KEYSTORE_BASE64}" | base64 -d > debug.keystore
+          elif [ ! -f debug.keystore ]; then
             keytool -genkeypair -v \
               -keystore debug.keystore \
               -storepass android \

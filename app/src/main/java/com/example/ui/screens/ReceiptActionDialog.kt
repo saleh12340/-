@@ -23,13 +23,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Wifi
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -387,7 +383,7 @@ fun ReceiptActionDialog(
                             .height(48.dp)
                             .testTag("thermal_print_button")
                     ) {
-                        Icon(imageVector = Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(imageVector = AppIcons.Print, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("طباعة حرارية", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -409,7 +405,7 @@ fun ReceiptActionDialog(
                             .height(48.dp)
                             .testTag("save_receipt_4k_png_button")
                     ) {
-                        Icon(imageVector = Icons.Filled.Image, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(imageVector = AppIcons.Image, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = if (previewThermalMode) "حفظ حراري PNG" else "حفظ 4K PNG",
@@ -426,7 +422,7 @@ fun ReceiptActionDialog(
                             .height(48.dp)
                             .testTag("save_receipt_pdf_button")
                     ) {
-                        Icon(imageVector = Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(imageVector = AppIcons.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
                         Text("حفظ PDF", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -456,7 +452,7 @@ fun ReceiptActionDialog(
                         .height(48.dp)
                         .testTag("system_print_direct_button")
                 ) {
-                    Icon(imageVector = Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(imageVector = AppIcons.Print, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
                     Text("طباعة النظام / USB / Wi-Fi Direct (4K)", maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
@@ -627,7 +623,7 @@ private fun ThermalPrintDialog(
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Filled.Bluetooth, contentDescription = null)
+                        Icon(AppIcons.Bluetooth, contentDescription = null)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("منح صلاحية البلوتوث وجلب الطابعات")
                     }
@@ -687,7 +683,7 @@ private fun ThermalPrintDialog(
                         if (isPrinting) {
                             CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                         } else {
-                            Icon(Icons.Filled.Bluetooth, contentDescription = null)
+                            Icon(AppIcons.Bluetooth, contentDescription = null)
                         }
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("طباعة عبر بلوتوث")
@@ -752,7 +748,7 @@ private fun ThermalPrintDialog(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Filled.Wifi, contentDescription = null)
+                    Icon(AppIcons.Wifi, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("طباعة عبر الشبكة IP")
                 }
@@ -779,7 +775,7 @@ private fun ThermalPrintDialog(
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Filled.Print, contentDescription = null)
+                    Icon(AppIcons.Print, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
                     Text("طباعة النظام / طابعة USB أو PDF (4K)")
                 }

@@ -27,13 +27,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Calculate
-import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.Sell
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.WarningAmber
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -152,7 +147,7 @@ fun ProductFormScreen(
                 // 1. Basic Product Data (Name, Barcode, Stock, Expiry)
                 SectionCard(
                     title = "البيانات الأساسية للمنتج",
-                    icon = Icons.Filled.Inventory2
+                    icon = AppIcons.Inventory2
                 ) {
                     OutlinedTextField(
                         value = state.name,
@@ -229,7 +224,7 @@ fun ProductFormScreen(
                 // 2. Multi-Level Unit Conversion Configuration
                 SectionCard(
                     title = "إعدادات الوحدات ومعامل التحويل",
-                    icon = Icons.Filled.Calculate
+                    icon = AppIcons.Calculate
                 ) {
                     OutlinedTextField(
                         value = state.baseUnitName,
@@ -273,7 +268,7 @@ fun ProductFormScreen(
                                             .testTag("remove_tier_$index")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Filled.DeleteOutline,
+                                            imageVector = AppIcons.DeleteOutline,
                                             contentDescription = "حذف الوحدة",
                                             tint = MaterialTheme.colorScheme.error
                                         )
@@ -387,7 +382,7 @@ fun ProductFormScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.Calculate,
+                                    imageVector = AppIcons.Calculate,
                                     contentDescription = null,
                                     tint = MaterialTheme.colorScheme.primary
                                 )
@@ -507,7 +502,7 @@ fun ProductFormScreen(
                             verticalAlignment = Alignment.Top
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.Shield,
+                                imageVector = AppIcons.Shield,
                                 contentDescription = null,
                                 tint = OnEmeraldContainer
                             )
@@ -530,7 +525,7 @@ fun ProductFormScreen(
                 // 5. Selling Price & Margin Preview (Strictly Isolated from Purchase Cost)
                 SectionCard(
                     title = "سعر البيع ومعاينة الربح",
-                    icon = Icons.Filled.Sell
+                    icon = AppIcons.Sell
                 ) {
                     LtrDecimalField(
                         value = state.baseSellPriceText,
@@ -697,7 +692,7 @@ private fun WarningBanner(message: String, isError: Boolean) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(
-                imageVector = Icons.Filled.WarningAmber,
+                imageVector = AppIcons.WarningAmber,
                 contentDescription = null,
                 tint = if (isError) MaterialTheme.colorScheme.error else AmberWarning,
                 modifier = Modifier.size(18.dp)

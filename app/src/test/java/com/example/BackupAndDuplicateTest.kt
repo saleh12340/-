@@ -61,7 +61,7 @@ class BackupAndDuplicateTest {
             0x1D, 0x76, 0x30, 0x00, 0x01, 0x00, 0x02, 0x00, // GS v 0, 1 byte/row, 2 rows
             0xA0.toByte(), // row 0
             0x01.toByte(), // row 1
-            0x1B, 0x64, 0x04, // ESC d 4
+            0x1B, 0x64, 0x02, // ESC d 2
             0x1D, 0x56, 0x42, 0x00 // GS V 66 0
         )
         assertArrayEquals(expected, bytes)

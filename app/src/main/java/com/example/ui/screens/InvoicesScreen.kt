@@ -37,21 +37,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ReceiptLong
-import androidx.compose.material.icons.filled.AddCircleOutline
-import androidx.compose.material.icons.filled.AddShoppingCart
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.EditNote
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.NoteAdd
-import androidx.compose.material.icons.filled.PersonSearch
-import androidx.compose.material.icons.filled.Print
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -73,6 +63,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -80,9 +71,14 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -104,7 +100,10 @@ import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.data.InvoiceDraftAutoSaveStore
 import com.example.data.InvoiceDraftLine
+import com.example.data.SavedInvoiceDraft
+import com.example.data.SavedInvoiceDraftLine
 import com.example.domain.Contact
 import com.example.domain.ContactSuggestion
 import com.example.domain.ContactType
@@ -203,34 +202,64 @@ fun InvoicesScreen(
     val contacts = (contactsState as? UiState.Success)?.data ?: emptyList()
     val savedInvoices = (invoicesState as? UiState.Success)?.data ?: emptyList()
 
+    val restoredDraft = remember(initialEditInvoice?.id) {
+        if (initialEditInvoice == null && settings.fastAutoSaveEnabled) {
+            InvoiceDraftAutoSaveStore.load(context)
+        } else {
+            null
+        }
+    }
+
     var showHistory by remember { mutableStateOf(false) }
     var editingInvoice by remember { mutableStateOf<Invoice?>(null) }
     var invoiceToDelete by remember { mutableStateOf<Invoice?>(null) }
+    var pendingRestoredContactId by remember { mutableStateOf(restoredDraft?.contactId ?: "") }
+    var pendingRestoredEditingId by remember { mutableStateOf(restoredDraft?.editingInvoiceId) }
+    var autoSavedRecently by remember { mutableStateOf(restoredDraft != null) }
 
     BackHandler(enabled = showHistory) {
         showHistory = false
     }
 
-    var invoiceType by remember { mutableStateOf(InvoiceType.SALE) }
-    var invoiceMode by remember { mutableStateOf(InvoiceMode.STOCK) }
-    var paymentMethod by remember { mutableStateOf(PaymentMethod.CASH) }
+    var invoiceType by remember { mutableStateOf(restoredDraft?.invoiceType ?: InvoiceType.SALE) }
+    var invoiceMode by remember { mutableStateOf(restoredDraft?.invoiceMode ?: InvoiceMode.STOCK) }
+    var paymentMethod by remember { mutableStateOf(restoredDraft?.paymentMethod ?: PaymentMethod.CASH) }
     var selectedContact by remember { mutableStateOf<Contact?>(null) }
-    var manualCustomerName by remember { mutableStateOf("") }
+    var manualCustomerName by remember { mutableStateOf(restoredDraft?.manualCustomerName ?: "") }
     var isCustomerFieldFocused by remember { mutableStateOf(false) }
-    var customInvoiceNumber by remember { mutableStateOf("") }
-    var notes by remember { mutableStateOf("") }
-    var discountInput by remember { mutableStateOf("") }
-    var paidInput by remember { mutableStateOf("") }
-    var isPaidManuallyEdited by remember { mutableStateOf(false) }
+    var customInvoiceNumber by remember { mutableStateOf(restoredDraft?.customInvoiceNumber ?: "") }
+    var notes by remember { mutableStateOf(restoredDraft?.notes ?: "") }
+    var discountInput by remember { mutableStateOf(restoredDraft?.discountInput ?: "") }
+    var paidInput by remember { mutableStateOf(restoredDraft?.paidInput ?: "") }
+    var isPaidManuallyEdited by remember { mutableStateOf(restoredDraft?.isPaidManuallyEdited ?: false) }
     var localError by remember { mutableStateOf<String?>(null) }
 
-    val draftLines = remember { mutableStateListOf<PendingUiLine>() }
-    var lineKeyCounter by remember { mutableIntStateOf(0) }
+    val draftLines = remember {
+        mutableStateListOf<PendingUiLine>().apply {
+            restoredDraft?.lines?.forEachIndexed { idx, saved ->
+                add(
+                    PendingUiLine(
+                        key = "restored_${idx + 1}",
+                        product = saved.toProductSnapshot(),
+                        unitName = saved.unitName,
+                        cumulativeFactor = saved.cumulativeFactor,
+                        unitQty = saved.unitQty,
+                        unitPrice = saved.unitPrice,
+                        description = saved.description,
+                        qtyText = saved.qtyText,
+                        totalText = saved.totalText,
+                        explicitTotal = saved.explicitTotal
+                    )
+                )
+            }
+        }
+    }
+    var lineKeyCounter by remember { mutableIntStateOf(restoredDraft?.lines?.size ?: 0) }
 
     // Inline active row inputs & smart product suggestion state
-    var draftSearchQuery by remember { mutableStateOf("") }
-    var draftQtyInput by remember { mutableStateOf("") }
-    var draftTotalInput by remember { mutableStateOf("") }
+    var draftSearchQuery by remember { mutableStateOf(restoredDraft?.draftSearchQuery ?: "") }
+    var draftQtyInput by remember { mutableStateOf(restoredDraft?.draftQtyInput ?: "") }
+    var draftTotalInput by remember { mutableStateOf(restoredDraft?.draftTotalInput ?: "") }
     var isProductInputFocused by remember { mutableStateOf(false) }
     var unitPickerLineKey by remember { mutableStateOf<String?>(null) }
 
@@ -302,6 +331,9 @@ fun InvoicesScreen(
 
     fun resetDraft(keepMode: Boolean = false) {
         editingInvoice = null
+        pendingRestoredEditingId = null
+        pendingRestoredContactId = ""
+        autoSavedRecently = false
         draftLines.clear()
         selectedContact = null
         manualCustomerName = ""
@@ -321,6 +353,7 @@ fun InvoicesScreen(
         if (!keepMode) {
             invoiceMode = InvoiceMode.STOCK
         }
+        InvoiceDraftAutoSaveStore.clear(context)
     }
 
     fun loadInvoiceForEdit(invoice: Invoice) {
@@ -395,6 +428,115 @@ fun InvoicesScreen(
         if (initialEditInvoice != null) {
             loadInvoiceForEdit(initialEditInvoice)
             onInitialEditHandled()
+        }
+    }
+
+    LaunchedEffect(contacts, pendingRestoredContactId) {
+        if (pendingRestoredContactId.isNotBlank() && selectedContact == null) {
+            val matched = contacts.firstOrNull { it.id == pendingRestoredContactId }
+            if (matched != null) {
+                selectedContact = matched
+                pendingRestoredContactId = ""
+            }
+        }
+    }
+
+    LaunchedEffect(savedInvoices, pendingRestoredEditingId) {
+        val targetId = pendingRestoredEditingId
+        if (!targetId.isNullOrBlank() && editingInvoice == null) {
+            val matched = savedInvoices.firstOrNull { it.id == targetId }
+            if (matched != null) {
+                editingInvoice = matched
+                pendingRestoredEditingId = null
+            }
+        }
+    }
+
+    LaunchedEffect(products) {
+        if (products.isNotEmpty()) {
+            for (i in draftLines.indices) {
+                val cur = draftLines[i]
+                val pid = cur.product.id
+                if (pid.isNotBlank() && !pid.startsWith("free_") && !pid.startsWith("draft_")) {
+                    val liveProd = products.firstOrNull { it.id == pid }
+                    if (liveProd != null && liveProd != cur.product) {
+                        draftLines[i] = cur.copy(product = liveProd)
+                    }
+                }
+            }
+        }
+    }
+
+    fun buildAutoSaveDraft(): SavedInvoiceDraft = SavedInvoiceDraft(
+        editingInvoiceId = editingInvoice?.id ?: pendingRestoredEditingId,
+        invoiceType = invoiceType,
+        invoiceMode = invoiceMode,
+        paymentMethod = paymentMethod,
+        contactId = selectedContact?.id ?: pendingRestoredContactId,
+        manualCustomerName = manualCustomerName,
+        customInvoiceNumber = customInvoiceNumber,
+        notes = notes,
+        discountInput = discountInput,
+        paidInput = paidInput,
+        isPaidManuallyEdited = isPaidManuallyEdited,
+        draftSearchQuery = draftSearchQuery,
+        draftQtyInput = draftQtyInput,
+        draftTotalInput = draftTotalInput,
+        lines = draftLines.map { line ->
+            SavedInvoiceDraftLine(
+                productId = line.product.id,
+                productName = line.product.name,
+                baseUnitName = line.product.baseUnitName,
+                defaultUnitName = line.product.defaultUnitName,
+                unitTiers = line.product.unitTiers,
+                baseCost = line.product.baseCost,
+                baseSellPrice = line.product.baseSellPrice,
+                stockBaseQty = line.product.stockBaseQty,
+                unitName = line.unitName,
+                cumulativeFactor = line.cumulativeFactor,
+                unitQty = line.unitQty,
+                unitPrice = line.unitPrice,
+                description = line.description,
+                qtyText = line.qtyText,
+                totalText = line.totalText,
+                explicitTotal = line.explicitTotal
+            )
+        }
+    )
+
+    val currentDraftSnapshot = buildAutoSaveDraft()
+    val latestDraftState = rememberUpdatedState(currentDraftSnapshot)
+
+    LaunchedEffect(currentDraftSnapshot.copy(updatedAtMillis = 0L), settings.fastAutoSaveEnabled) {
+        if (!settings.fastAutoSaveEnabled) {
+            autoSavedRecently = false
+            return@LaunchedEffect
+        }
+        if (currentDraftSnapshot.isEffectivelyEmpty) {
+            autoSavedRecently = false
+            InvoiceDraftAutoSaveStore.clear(context)
+            return@LaunchedEffect
+        }
+        delay(180L)
+        InvoiceDraftAutoSaveStore.save(context, currentDraftSnapshot)
+        autoSavedRecently = true
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, settings.fastAutoSaveEnabled) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (settings.fastAutoSaveEnabled &&
+                (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP)
+            ) {
+                InvoiceDraftAutoSaveStore.save(context, latestDraftState.value)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            if (settings.fastAutoSaveEnabled) {
+                InvoiceDraftAutoSaveStore.save(context, latestDraftState.value)
+            }
         }
     }
 
@@ -910,7 +1052,7 @@ fun InvoicesScreen(
                                             .clickable { showInvoiceNumDialog = true }
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Filled.EditNote,
+                                            imageVector = AppIcons.EditNote,
                                             contentDescription = "ملاحظات الفاتورة",
                                             tint = if (notes.isNotBlank()) LedgerGreen else LedgerNavy.copy(alpha = 0.7f),
                                             modifier = Modifier.size(16.dp)
@@ -979,6 +1121,18 @@ fun InvoicesScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                if (settings.fastAutoSaveEnabled && autoSavedRecently) {
+                                    Text(
+                                        text = "حفظ تلقائي ✓",
+                                        fontFamily = AmiriFontFamily,
+                                        fontSize = 9.5.sp,
+                                        lineHeight = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = LedgerGreen,
+                                        maxLines = 1,
+                                        modifier = Modifier.testTag("invoice_autosave_badge")
+                                    )
+                                }
                             }
                         }
 
@@ -1054,7 +1208,7 @@ fun InvoicesScreen(
                                             .clickable { showCustomerDialog = true }
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Filled.PersonSearch,
+                                            imageVector = AppIcons.PersonSearch,
                                             contentDescription = "عرض كل الحسابات",
                                             tint = LedgerNavy,
                                             modifier = Modifier.size(18.dp)
@@ -1285,16 +1439,16 @@ fun InvoicesScreen(
                                         .height(IntrinsicSize.Min),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    TableHeaderCell("القيمة الإجمالية", fontSizeSp = 12.5f, modifier = Modifier.weight(0.92f))
-                                    VerticalDivider(color = Color(0xFF64748B), modifier = Modifier.fillMaxHeight().padding(vertical = 3.dp))
-                                    TableHeaderCell("الكمية", fontSizeSp = 12.5f, modifier = Modifier.weight(0.66f))
-                                    VerticalDivider(color = Color(0xFF64748B), modifier = Modifier.fillMaxHeight().padding(vertical = 3.dp))
-                                    TableHeaderCell("التفاصيــــــل", fontSizeSp = 13f, modifier = Modifier.weight(1.82f))
-                                    VerticalDivider(color = Color(0xFF64748B), modifier = Modifier.fillMaxHeight().padding(vertical = 3.dp))
+                                    TableHeaderCell("القيمة الإجمالية", fontSizeSp = 11f, modifier = Modifier.weight(0.92f))
+                                    VerticalDivider(color = Color(0xFF64748B), modifier = Modifier.fillMaxHeight().padding(vertical = 2.dp))
+                                    TableHeaderCell("الكمية", fontSizeSp = 11f, modifier = Modifier.weight(0.66f))
+                                    VerticalDivider(color = Color(0xFF64748B), modifier = Modifier.fillMaxHeight().padding(vertical = 2.dp))
+                                    TableHeaderCell("التفاصيــــــل", fontSizeSp = 11.5f, modifier = Modifier.weight(1.82f))
+                                    VerticalDivider(color = Color(0xFF64748B), modifier = Modifier.fillMaxHeight().padding(vertical = 2.dp))
                                     TableHeaderCell(
                                         text = "سعر الواحدة",
-                                        textColor = Color(0xFFCBD5E1).copy(alpha = 0.8f),
-                                        fontSizeSp = 10f,
+                                        textColor = Color(0xFFCBD5E1).copy(alpha = 0.85f),
+                                        fontSizeSp = 9.5f,
                                         modifier = Modifier.weight(0.60f)
                                     )
                                 }
@@ -1338,7 +1492,7 @@ fun InvoicesScreen(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .height(IntrinsicSize.Min)
-                                            .heightIn(min = 34.dp)
+                                            .heightIn(min = 25.dp)
                                             .background(rowBg),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -1348,7 +1502,7 @@ fun InvoicesScreen(
                                             modifier = Modifier
                                                 .weight(0.92f)
                                                 .fillMaxHeight()
-                                                .padding(horizontal = 3.dp, vertical = 3.dp)
+                                                .padding(horizontal = 2.dp, vertical = 1.dp)
                                         ) {
                                             BasicTextField(
                                                 value = line.totalText,
@@ -1373,7 +1527,8 @@ fun InvoicesScreen(
                                                     fontFamily = AmiriFontFamily,
                                                     color = LedgerNavy,
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 13.5.sp,
+                                                    fontSize = 12.sp,
+                                                    lineHeight = 14.sp,
                                                     textAlign = TextAlign.Center,
                                                     textDirection = TextDirection.Ltr
                                                 ),
@@ -1387,7 +1542,7 @@ fun InvoicesScreen(
                                                 decorationBox = { innerTextField ->
                                                     Box(contentAlignment = Alignment.Center) {
                                                         if (line.totalText.isEmpty()) {
-                                                            Text("0", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                            Text("0", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
                                                         }
                                                         innerTextField()
                                                     }
@@ -1403,7 +1558,7 @@ fun InvoicesScreen(
                                             modifier = Modifier
                                                 .weight(0.66f)
                                                 .fillMaxHeight()
-                                                .padding(horizontal = 3.dp, vertical = 3.dp)
+                                                .padding(horizontal = 2.dp, vertical = 1.dp)
                                         ) {
                                             BasicTextField(
                                                 value = line.qtyText,
@@ -1425,7 +1580,8 @@ fun InvoicesScreen(
                                                     fontFamily = AmiriFontFamily,
                                                     color = if (exceedsStock) LedgerCrimson else Color(0xFF0F172A),
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 13.5.sp,
+                                                    fontSize = 12.sp,
+                                                    lineHeight = 14.sp,
                                                     textAlign = TextAlign.Center,
                                                     textDirection = TextDirection.Ltr
                                                 ),
@@ -1439,7 +1595,7 @@ fun InvoicesScreen(
                                                 decorationBox = { innerTextField ->
                                                     Box(contentAlignment = Alignment.Center) {
                                                         if (line.qtyText.isEmpty()) {
-                                                            Text("0", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                            Text("0", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
                                                         }
                                                         innerTextField()
                                                     }
@@ -1453,19 +1609,19 @@ fun InvoicesScreen(
                                         Column(
                                             modifier = Modifier
                                                 .weight(1.82f)
-                                                .padding(horizontal = 5.dp, vertical = 2.dp),
+                                                .padding(horizontal = 4.dp, vertical = 1.dp),
                                             verticalArrangement = Arrangement.Center
                                         ) {
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                horizontalArrangement = Arrangement.spacedBy(3.dp)
                                             ) {
                                                 Text(
                                                     text = "${idx + 1}. ${line.product.name}",
                                                     fontFamily = AmiriFontFamily,
-                                                    fontSize = 13.sp,
-                                                    lineHeight = 16.sp,
+                                                    fontSize = 12.sp,
+                                                    lineHeight = 14.sp,
                                                     fontWeight = FontWeight.Bold,
                                                     color = Color(0xFF0F172A),
                                                     maxLines = 1,
@@ -1479,16 +1635,17 @@ fun InvoicesScreen(
                                                     Surface(
                                                         onClick = { unitPickerLineKey = line.key },
                                                         color = LedgerNavy.copy(alpha = 0.08f),
-                                                        shape = RoundedCornerShape(5.dp)
+                                                        shape = RoundedCornerShape(4.dp)
                                                     ) {
                                                         Row(
                                                             verticalAlignment = Alignment.CenterVertically,
-                                                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 0.dp)
                                                         ) {
                                                             Text(
                                                                 text = line.unitName,
                                                                 fontFamily = AmiriFontFamily,
-                                                                fontSize = 10.5.sp,
+                                                                fontSize = 9.5.sp,
+                                                                lineHeight = 12.sp,
                                                                 color = LedgerNavy,
                                                                 fontWeight = FontWeight.SemiBold,
                                                                 maxLines = 1
@@ -1498,7 +1655,7 @@ fun InvoicesScreen(
                                                                     imageVector = Icons.Filled.KeyboardArrowDown,
                                                                     contentDescription = "تبديل الوحدة",
                                                                     tint = LedgerNavy,
-                                                                    modifier = Modifier.size(12.dp)
+                                                                    modifier = Modifier.size(10.dp)
                                                                 )
                                                             }
                                                         }
@@ -1550,7 +1707,7 @@ fun InvoicesScreen(
                                                 Box(
                                                     contentAlignment = Alignment.Center,
                                                     modifier = Modifier
-                                                        .size(20.dp)
+                                                        .size(18.dp)
                                                         .clip(CircleShape)
                                                         .clickable { draftLines.removeAt(idx) }
                                                 ) {
@@ -1558,7 +1715,7 @@ fun InvoicesScreen(
                                                         imageVector = Icons.Filled.Close,
                                                         contentDescription = "حذف الصنف",
                                                         tint = LedgerCrimson.copy(alpha = 0.75f),
-                                                        modifier = Modifier.size(13.dp)
+                                                        modifier = Modifier.size(12.dp)
                                                     )
                                                 }
                                             }
@@ -1568,8 +1725,8 @@ fun InvoicesScreen(
                                                     text = line.description,
                                                     fontFamily = AmiriFontFamily,
                                                     color = Color(0xFF64748B),
-                                                    fontSize = 10.sp,
-                                                    lineHeight = 12.sp,
+                                                    fontSize = 9.5.sp,
+                                                    lineHeight = 11.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
@@ -1580,8 +1737,8 @@ fun InvoicesScreen(
                                                     text = "المتاح: ${NumberFormatUtils.formatNumber(availableBaseStock)} ${line.product.baseUnitName}",
                                                     fontFamily = AmiriFontFamily,
                                                     color = LedgerCrimson,
-                                                    fontSize = 9.5.sp,
-                                                    lineHeight = 12.sp
+                                                    fontSize = 9.sp,
+                                                    lineHeight = 11.sp
                                                 )
                                             }
                                         }
@@ -1593,19 +1750,20 @@ fun InvoicesScreen(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
                                                 .weight(0.60f)
-                                                .padding(horizontal = 2.dp, vertical = 3.dp)
+                                                .padding(horizontal = 2.dp, vertical = 1.dp)
                                         ) {
                                             Text(
                                                 text = NumberFormatUtils.formatNumber(line.inferredUnitPrice),
                                                 fontFamily = AmiriFontFamily,
-                                                fontSize = 11.sp,
+                                                fontSize = 10.sp,
+                                                lineHeight = 12.sp,
                                                 color = Color(0xFF94A3B8),
                                                 maxLines = 1
                                             )
                                         }
                                     }
 
-                                    HorizontalDivider(thickness = 0.8.dp, color = LedgerNavy.copy(alpha = 0.65f))
+                                    HorizontalDivider(thickness = 0.6.dp, color = LedgerNavy.copy(alpha = 0.55f))
                                 }
 
                                 // Active Input Row (Direct Inline Typing in Total | Qty | Details + Live Inferred Unit Price)
@@ -1622,7 +1780,7 @@ fun InvoicesScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(IntrinsicSize.Min)
-                                        .heightIn(min = 34.dp)
+                                        .heightIn(min = 25.dp)
                                         .background(Color(0xFFFAFBFD)),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -1632,7 +1790,7 @@ fun InvoicesScreen(
                                         modifier = Modifier
                                             .weight(0.92f)
                                             .fillMaxHeight()
-                                            .padding(horizontal = 3.dp, vertical = 4.dp)
+                                            .padding(horizontal = 2.dp, vertical = 1.dp)
                                     ) {
                                         BasicTextField(
                                             value = draftTotalInput,
@@ -1646,7 +1804,8 @@ fun InvoicesScreen(
                                                 fontFamily = AmiriFontFamily,
                                                 color = LedgerNavy,
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp,
+                                                fontSize = 12.sp,
+                                                lineHeight = 14.sp,
                                                 textAlign = TextAlign.Center,
                                                 textDirection = TextDirection.Ltr
                                             ),
@@ -1664,7 +1823,7 @@ fun InvoicesScreen(
                                             decorationBox = { innerTextField ->
                                                 Box(contentAlignment = Alignment.Center) {
                                                     if (draftTotalInput.isEmpty()) {
-                                                        Text("0", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                        Text("0", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
                                                     }
                                                     innerTextField()
                                                 }
@@ -1680,7 +1839,7 @@ fun InvoicesScreen(
                                         modifier = Modifier
                                             .weight(0.66f)
                                             .fillMaxHeight()
-                                            .padding(horizontal = 3.dp, vertical = 4.dp)
+                                            .padding(horizontal = 2.dp, vertical = 1.dp)
                                     ) {
                                         BasicTextField(
                                             value = draftQtyInput,
@@ -1694,7 +1853,8 @@ fun InvoicesScreen(
                                                 fontFamily = AmiriFontFamily,
                                                 color = Color(0xFF0F172A),
                                                 fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp,
+                                                fontSize = 12.sp,
+                                                lineHeight = 14.sp,
                                                 textAlign = TextAlign.Center,
                                                 textDirection = TextDirection.Ltr
                                             ),
@@ -1712,7 +1872,7 @@ fun InvoicesScreen(
                                             decorationBox = { innerTextField ->
                                                 Box(contentAlignment = Alignment.Center) {
                                                     if (draftQtyInput.isEmpty()) {
-                                                        Text("-", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                                        Text("-", fontFamily = AmiriFontFamily, color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 11.5.sp)
                                                     }
                                                     innerTextField()
                                                 }
@@ -1728,7 +1888,7 @@ fun InvoicesScreen(
                                         modifier = Modifier
                                             .weight(1.82f)
                                             .fillMaxHeight()
-                                            .padding(horizontal = 5.dp, vertical = 3.dp)
+                                            .padding(horizontal = 4.dp, vertical = 1.dp)
                                     ) {
                                         BasicTextField(
                                             value = draftSearchQuery,
@@ -1743,7 +1903,8 @@ fun InvoicesScreen(
                                                 fontFamily = AmiriFontFamily,
                                                 color = Color(0xFF0F172A),
                                                 fontWeight = FontWeight.SemiBold,
-                                                fontSize = 13.sp
+                                                fontSize = 11.5.sp,
+                                                lineHeight = 14.sp
                                             ),
                                             keyboardOptions = KeyboardOptions(
                                                 keyboardType = KeyboardType.Text,
@@ -1788,7 +1949,8 @@ fun InvoicesScreen(
                                                             },
                                                             fontFamily = AmiriFontFamily,
                                                             color = Color(0xFF94A3B8),
-                                                            fontSize = 12.5.sp,
+                                                            fontSize = 11.sp,
+                                                            lineHeight = 13.sp,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
@@ -1801,7 +1963,7 @@ fun InvoicesScreen(
                                             Box(
                                                 contentAlignment = Alignment.Center,
                                                 modifier = Modifier
-                                                    .size(24.dp)
+                                                    .size(20.dp)
                                                     .clip(CircleShape)
                                                     .clickable {
                                                         commitActiveRowIfReady(
@@ -1812,17 +1974,17 @@ fun InvoicesScreen(
                                                     .testTag("commit_active_row_button")
                                             ) {
                                                 Icon(
-                                                    imageVector = Icons.Filled.AddCircleOutline,
+                                                    imageVector = AppIcons.AddCircleOutline,
                                                     contentDescription = "إضافة السطر وفتح صف جديد",
                                                     tint = LedgerGreen,
-                                                    modifier = Modifier.size(16.dp)
+                                                    modifier = Modifier.size(14.dp)
                                                 )
                                             }
                                         }
                                         Box(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
-                                                .size(24.dp)
+                                                .size(20.dp)
                                                 .clip(CircleShape)
                                                 .clickable {
                                                     if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.SALE) {
@@ -1844,7 +2006,7 @@ fun InvoicesScreen(
                                                 imageVector = Icons.Filled.Search,
                                                 contentDescription = "فتح نافذة اختيار الصنف",
                                                 tint = LedgerNavy.copy(alpha = 0.75f),
-                                                modifier = Modifier.size(16.dp)
+                                                modifier = Modifier.size(14.dp)
                                             )
                                         }
                                     }
@@ -1856,12 +2018,13 @@ fun InvoicesScreen(
                                         contentAlignment = Alignment.Center,
                                         modifier = Modifier
                                             .weight(0.60f)
-                                            .padding(vertical = 3.dp)
+                                            .padding(vertical = 1.dp)
                                     ) {
                                         Text(
                                             text = activeInferredText,
                                             fontFamily = AmiriFontFamily,
-                                            fontSize = 11.sp,
+                                            fontSize = 10.sp,
+                                            lineHeight = 12.sp,
                                             color = if (activeInferredText == "-") Color(0xFFCBD5E1) else Color(0xFF94A3B8),
                                             maxLines = 1
                                         )
@@ -1871,12 +2034,12 @@ fun InvoicesScreen(
                                 // Auto-Created Next Empty Row whenever the active row starts being filled (for both SALE and PURCHASE)
                                 AnimatedVisibility(visible = hasActiveRowInput) {
                                     Column(modifier = Modifier.fillMaxWidth()) {
-                                        HorizontalDivider(thickness = 0.8.dp, color = LedgerNavy.copy(alpha = 0.45f))
+                                        HorizontalDivider(thickness = 0.6.dp, color = LedgerNavy.copy(alpha = 0.45f))
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .height(IntrinsicSize.Min)
-                                                .heightIn(min = 34.dp)
+                                                .heightIn(min = 24.dp)
                                                 .background(Color(0xFFF1F5F9).copy(alpha = 0.7f))
                                                 .testTag("auto_next_row"),
                                             verticalAlignment = Alignment.CenterVertically
@@ -1892,7 +2055,7 @@ fun InvoicesScreen(
                                                             showIncompleteError = true
                                                         )
                                                     }
-                                                    .padding(horizontal = 3.dp, vertical = 4.dp)
+                                                    .padding(horizontal = 2.dp, vertical = 1.dp)
                                                     .testTag("auto_next_total_cell")
                                             ) {
                                                 Text(
@@ -1900,7 +2063,7 @@ fun InvoicesScreen(
                                                     fontFamily = AmiriFontFamily,
                                                     color = Color(0xFFCBD5E1),
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 13.sp
+                                                    fontSize = 11.5.sp
                                                 )
                                             }
                                             VerticalDivider(color = LedgerNavy.copy(alpha = 0.35f), modifier = Modifier.fillMaxHeight())
@@ -1915,7 +2078,7 @@ fun InvoicesScreen(
                                                             showIncompleteError = true
                                                         )
                                                     }
-                                                    .padding(horizontal = 3.dp, vertical = 4.dp)
+                                                    .padding(horizontal = 2.dp, vertical = 1.dp)
                                                     .testTag("auto_next_qty_cell")
                                             ) {
                                                 Text(
@@ -1923,7 +2086,7 @@ fun InvoicesScreen(
                                                     fontFamily = AmiriFontFamily,
                                                     color = Color(0xFFCBD5E1),
                                                     fontWeight = FontWeight.Bold,
-                                                    fontSize = 13.sp
+                                                    fontSize = 11.5.sp
                                                 )
                                             }
                                             VerticalDivider(color = LedgerNavy.copy(alpha = 0.35f), modifier = Modifier.fillMaxHeight())
@@ -1938,14 +2101,15 @@ fun InvoicesScreen(
                                                             showIncompleteError = true
                                                         )
                                                     }
-                                                    .padding(horizontal = 5.dp, vertical = 3.dp)
+                                                    .padding(horizontal = 4.dp, vertical = 1.dp)
                                                     .testTag("auto_next_name_cell")
                                             ) {
                                                 Text(
                                                     text = "${draftLines.size + 2}. صف جديد تلقائي (اضغط للإضافة والانتقال...)",
                                                     fontFamily = AmiriFontFamily,
                                                     color = Color(0xFF94A3B8),
-                                                    fontSize = 11.5.sp,
+                                                    fontSize = 10.5.sp,
+                                                    lineHeight = 13.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
@@ -1955,12 +2119,12 @@ fun InvoicesScreen(
                                                 contentAlignment = Alignment.Center,
                                                 modifier = Modifier
                                                     .weight(0.60f)
-                                                    .padding(vertical = 3.dp)
+                                                    .padding(vertical = 1.dp)
                                             ) {
                                                 Text(
                                                     text = "-",
                                                     fontFamily = AmiriFontFamily,
-                                                    fontSize = 11.sp,
+                                                    fontSize = 10.sp,
                                                     color = Color(0xFFCBD5E1)
                                                 )
                                             }
@@ -2296,7 +2460,7 @@ fun InvoicesScreen(
                             .height(48.dp)
                             .testTag("new_invoice_button")
                     ) {
-                        Icon(Icons.Filled.NoteAdd, contentDescription = null, modifier = Modifier.size(15.dp), tint = LedgerNavy)
+                        Icon(AppIcons.NoteAdd, contentDescription = null, modifier = Modifier.size(15.dp), tint = LedgerNavy)
                         Spacer(modifier = Modifier.width(3.dp))
                         Text("جديد", color = LedgerNavy, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -2410,7 +2574,7 @@ fun InvoicesScreen(
                                 strokeWidth = 2.dp
                             )
                         } else {
-                            Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(AppIcons.Save, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(3.dp))
                             Text(
                                 text = if (editingInvoice != null) "تحديث" else "حفظ",
@@ -2435,7 +2599,7 @@ fun InvoicesScreen(
                             .height(48.dp)
                             .testTag("tab_invoice_history")
                     ) {
-                        Icon(Icons.Filled.History, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Icon(AppIcons.History, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(3.dp))
                         Text("السجل", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -2460,7 +2624,7 @@ fun InvoicesScreen(
                             .height(48.dp)
                             .testTag("print_invoice_button")
                     ) {
-                        Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Icon(AppIcons.Print, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(3.dp))
                         Text("طباعة", fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -2930,7 +3094,7 @@ private fun SmartCustomerSuggestionsPanel(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.AutoAwesome,
+                        imageVector = AppIcons.AutoAwesome,
                         contentDescription = null,
                         tint = LedgerGold,
                         modifier = Modifier.size(15.dp)
@@ -3031,7 +3195,7 @@ private fun SmartProductSuggestionsPanel(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.AutoAwesome,
+                        imageVector = AppIcons.AutoAwesome,
                         contentDescription = null,
                         tint = LedgerGold,
                         modifier = Modifier.size(15.dp)
@@ -3089,7 +3253,7 @@ private fun SmartProductSuggestionsPanel(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.AddShoppingCart,
+                            imageVector = AppIcons.AddShoppingCart,
                             contentDescription = null,
                             tint = OnEmeraldContainer,
                             modifier = Modifier.size(16.dp)
@@ -3376,7 +3540,7 @@ private fun FreeSaleLineDialog(
                             onClick = onDelete,
                             colors = ButtonDefaults.textButtonColors(contentColor = LedgerCrimson)
                         ) {
-                            Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("حذف")
                         }
@@ -3632,7 +3796,7 @@ private fun QuickWholesaleProductDialog(
                             onClick = onDelete,
                             colors = ButtonDefaults.textButtonColors(contentColor = LedgerCrimson)
                         ) {
-                            Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.DeleteOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("حذف")
                         }
@@ -3920,7 +4084,7 @@ private fun InvoiceLinePickerDialog(
                         colors = ButtonDefaults.textButtonColors(contentColor = LedgerCrimson),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Filled.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(AppIcons.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("حذف الصنف من الفاتورة")
                     }
@@ -3960,7 +4124,7 @@ private fun InvoiceLinePickerDialog(
                 },
                 modifier = Modifier.testTag("add_invoice_line_button")
             ) {
-                Icon(Icons.Filled.AddShoppingCart, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(AppIcons.AddShoppingCart, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(if (existingLine == null) "إضافة" else "تحديث")
             }
@@ -3980,13 +4144,14 @@ private fun TableHeaderCell(
 ) {
     Box(
         contentAlignment = Alignment.Center,
-        modifier = modifier.padding(horizontal = 3.dp, vertical = 5.dp)
+        modifier = modifier.padding(horizontal = 2.dp, vertical = 2.dp)
     ) {
         Text(
             text = text,
             fontFamily = AmiriFontFamily,
             color = textColor,
-            fontSize = (fontSizeSp ?: 13f).sp,
+            fontSize = (fontSizeSp ?: 11.5f).sp,
+            lineHeight = 14.sp,
             fontWeight = FontWeight.Bold,
             textAlign = TextAlign.Center,
             maxLines = 1,
@@ -4077,7 +4242,7 @@ private fun InvoiceHistoryContent(
                     Box(Modifier.fillMaxSize().padding(20.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                                imageVector = AppIcons.ReceiptLong,
                                 contentDescription = null,
                                 tint = LedgerNavy,
                                 modifier = Modifier.size(44.dp)
@@ -4224,14 +4389,20 @@ private fun InvoiceHistoryContent(
 
                                     HorizontalDivider(color = LedgerNavy.copy(alpha = 0.12f))
 
-                                    invoice.lines.forEach { line ->
-                                        val descSuffix = if (line.description.isNotBlank()) " (${line.description})" else ""
-                                        Text(
-                                            text = "• ${line.productName}$descSuffix: ${NumberFormatUtils.formatNumber(line.unitQty)} ${line.unitName} × ${NumberFormatUtils.formatNumber(line.unitPrice)} = ${NumberFormatUtils.formatNumber(line.lineTotal)}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
+                                    Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                        invoice.lines.forEach { line ->
+                                            val descSuffix = if (line.description.isNotBlank()) " (${line.description})" else ""
+                                            Text(
+                                                text = "• ${line.productName}$descSuffix: ${NumberFormatUtils.formatNumber(line.unitQty)} ${line.unitName} × ${NumberFormatUtils.formatNumber(line.unitPrice)} = ${NumberFormatUtils.formatNumber(line.lineTotal)}",
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontFamily = AmiriFontFamily,
+                                                    fontSize = 11.sp,
+                                                    lineHeight = 14.sp
+                                                ),
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
                                     }
 
                                     Row(
@@ -4270,7 +4441,7 @@ private fun InvoiceHistoryContent(
                                                 .testTag("delete_invoice_button_${invoice.invoiceNumber}")
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Filled.DeleteOutline,
+                                                imageVector = AppIcons.DeleteOutline,
                                                 contentDescription = "حذف الفاتورة",
                                                 tint = LedgerCrimson,
                                                 modifier = Modifier.size(16.dp)
@@ -4290,7 +4461,7 @@ private fun InvoiceHistoryContent(
                                                 .testTag("open_receipt_button_${invoice.invoiceNumber}")
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Filled.Print,
+                                                imageVector = AppIcons.Print,
                                                 contentDescription = "طباعة وإيصال",
                                                 modifier = Modifier.size(16.dp)
                                             )

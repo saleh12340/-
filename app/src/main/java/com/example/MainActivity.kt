@@ -17,12 +17,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.automirrored.filled.ReceiptLong
-import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Settings
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -322,9 +318,9 @@ fun MainWarehouseApp(
     }
 
     val destinations = listOf(
-        Triple("المخزون", Icons.Filled.Inventory2, "nav_inventory"),
-        Triple("الفواتير", Icons.AutoMirrored.Filled.ReceiptLong, "nav_invoices"),
-        Triple("الحسابات", Icons.Filled.AccountBalanceWallet, "nav_accounts"),
+        Triple("المخزون", AppIcons.Inventory2, "nav_inventory"),
+        Triple("الفواتير", AppIcons.ReceiptLong, "nav_invoices"),
+        Triple("الحسابات", AppIcons.AccountBalanceWallet, "nav_accounts"),
         Triple("الإعدادات", Icons.Filled.Settings, "nav_settings")
     )
 
@@ -379,7 +375,7 @@ fun MainWarehouseApp(
                                     .testTag("sign_out_button")
                             ) {
                                 Icon(
-                                    imageVector = if (isCloudMode) Icons.AutoMirrored.Filled.Logout else Icons.Filled.Backup,
+                                    imageVector = if (isCloudMode) AppIcons.Logout else AppIcons.Backup,
                                     contentDescription = if (isCloudMode) "فصل الحساب ($userDisplayName)" else "الوضع المحلي - النسخ والربط",
                                     tint = androidx.compose.ui.graphics.Color.White
                                 )

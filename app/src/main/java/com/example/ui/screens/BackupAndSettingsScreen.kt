@@ -22,21 +22,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Login
-import androidx.compose.material.icons.automirrored.filled.Logout
-import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.Bluetooth
-import androidx.compose.material.icons.filled.CloudDone
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.PhoneAndroid
-import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Print
-import androidx.compose.material.icons.filled.Restore
-import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Storage
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -50,15 +38,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -87,12 +79,14 @@ import com.example.export.ReceiptRenderer4K
 import com.example.export.ShareHelper
 import com.example.print.EscPosPrinter
 import com.example.print.PairedPrinterDevice
+import com.example.print.PrinterSettings
 import com.example.print.PrinterSettingsStore
 import com.example.ui.theme.EmeraldAccent
 import com.example.ui.theme.EmeraldContainer
 import com.example.ui.theme.LedgerNavy
 import com.example.ui.theme.OnEmeraldContainer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
@@ -128,10 +122,60 @@ fun BackupAndSettingsScreen(
     var wifiPortText by remember { mutableStateOf(initialSettings.wifiPort.toString()) }
     var btName by remember { mutableStateOf(initialSettings.bluetoothName) }
     var btAddress by remember { mutableStateOf(initialSettings.bluetoothAddress) }
+    var fastAutoSaveEnabled by remember { mutableStateOf(initialSettings.fastAutoSaveEnabled) }
+    var hasEditedSettings by remember { mutableStateOf(false) }
+    var settingsAutoSaved by remember { mutableStateOf(false) }
     var pairedDevices by remember { mutableStateOf<List<PairedPrinterDevice>>(emptyList()) }
     var isLinkingGoogle by remember { mutableStateOf(false) }
 
     var pendingRestoreBundle by remember { mutableStateOf<BackupBundle?>(null) }
+
+    fun currentPrinterSettings(autoSaveFlag: Boolean = fastAutoSaveEnabled): PrinterSettings = initialSettings.copy(
+        storeName = storeName,
+        storeSubtitle = storeSubtitle,
+        storePhone = storePhone,
+        storeBadgeText = storeBadgeText,
+        footerPolicy = footerPolicy,
+        paperWidthMm = paperWidthMm,
+        wifiHost = wifiHost,
+        wifiPort = wifiPortText.toIntOrNull() ?: 9100,
+        bluetoothName = btName,
+        bluetoothAddress = btAddress,
+        fastAutoSaveEnabled = autoSaveFlag
+    )
+
+    val latestSettingsState = rememberUpdatedState(currentPrinterSettings())
+    val latestEditedState = rememberUpdatedState(hasEditedSettings)
+    val latestFastAutoSaveState = rememberUpdatedState(fastAutoSaveEnabled)
+
+    LaunchedEffect(
+        fastAutoSaveEnabled,
+        hasEditedSettings,
+        storeName,
+        storeSubtitle,
+        storePhone,
+        storeBadgeText,
+        footerPolicy,
+        paperWidthMm,
+        wifiHost,
+        wifiPortText,
+        btName,
+        btAddress
+    ) {
+        if (fastAutoSaveEnabled && hasEditedSettings) {
+            delay(180L)
+            PrinterSettingsStore.save(context, currentPrinterSettings())
+            settingsAutoSaved = true
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            if (latestFastAutoSaveState.value && latestEditedState.value) {
+                PrinterSettingsStore.save(context, latestSettingsState.value)
+            }
+        }
+    }
 
     val products = (productsState as? UiState.Success)?.data ?: emptyList()
     val contacts = (contactsState as? UiState.Success)?.data ?: emptyList()
@@ -244,6 +288,72 @@ fun BackupAndSettingsScreen(
                 )
             }
 
+            // 0. Fast Auto-Save Toggle Card
+            Card(
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "الحفظ التلقائي السريع",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (fastAutoSaveEnabled && settingsAutoSaved) {
+                                Surface(
+                                    color = EmeraldContainer,
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text(
+                                        text = "محفوظ تلقائياً ✓",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = OnEmeraldContainer,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = "حفظ مسودات الفواتير والإعدادات فوراً أثناء الكتابة وعند التنقل لحمايتها من الضياع (دون ترحيل المخزون قبل الحفظ)",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = fastAutoSaveEnabled,
+                        onCheckedChange = { enabled ->
+                            fastAutoSaveEnabled = enabled
+                            hasEditedSettings = true
+                            PrinterSettingsStore.save(context, currentPrinterSettings(autoSaveFlag = enabled))
+                            settingsAutoSaved = enabled
+                            onShowMessage(
+                                if (enabled) "تم تفعيل الحفظ التلقائي السريع"
+                                else "تم إيقاف الحفظ التلقائي السريع"
+                            )
+                        },
+                        modifier = Modifier.testTag("fast_autosave_switch")
+                    )
+                }
+            }
+
             if (settingsSection == 0 || settingsSection == 1) {
                 // 1. Store Identity & Header Card
                 Card(
@@ -261,7 +371,7 @@ fun BackupAndSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Print,
+                            imageVector = AppIcons.Print,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
@@ -276,14 +386,14 @@ fun BackupAndSettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedTextField(
                             value = storeName,
-                            onValueChange = { storeName = it },
+                            onValueChange = { storeName = it; hasEditedSettings = true },
                             label = { Text("اسم المتجر") },
                             singleLine = true,
                             modifier = Modifier.weight(2f)
                         )
                         OutlinedTextField(
                             value = storeBadgeText,
-                            onValueChange = { storeBadgeText = it.take(4) },
+                            onValueChange = { storeBadgeText = it.take(4); hasEditedSettings = true },
                             label = { Text("الرمز") },
                             singleLine = true,
                             modifier = Modifier.weight(1f)
@@ -293,14 +403,14 @@ fun BackupAndSettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedTextField(
                             value = storeSubtitle,
-                            onValueChange = { storeSubtitle = it },
+                            onValueChange = { storeSubtitle = it; hasEditedSettings = true },
                             label = { Text("النشاط (مثل: للتجارة العامة)") },
                             singleLine = true,
                             modifier = Modifier.weight(1.4f)
                         )
                         OutlinedTextField(
                             value = storePhone,
-                            onValueChange = { storePhone = NumberFormatUtils.toEnglishDigits(it) },
+                            onValueChange = { storePhone = NumberFormatUtils.toEnglishDigits(it); hasEditedSettings = true },
                             label = { Text("رقم الهاتف") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
@@ -310,7 +420,7 @@ fun BackupAndSettingsScreen(
 
                     OutlinedTextField(
                         value = footerPolicy,
-                        onValueChange = { footerPolicy = it },
+                        onValueChange = { footerPolicy = it; hasEditedSettings = true },
                         label = { Text("عبارة تذييل الفاتورة") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
@@ -334,7 +444,7 @@ fun BackupAndSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Bluetooth,
+                            imageVector = AppIcons.Bluetooth,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
@@ -350,12 +460,12 @@ fun BackupAndSettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         FilterChip(
                             selected = paperWidthMm == 58,
-                            onClick = { paperWidthMm = 58 },
+                            onClick = { paperWidthMm = 58; hasEditedSettings = true },
                             label = { Text("58 مم") }
                         )
                         FilterChip(
                             selected = paperWidthMm == 80,
-                            onClick = { paperWidthMm = 80 },
+                            onClick = { paperWidthMm = 80; hasEditedSettings = true },
                             label = { Text("80 مم") }
                         )
                     }
@@ -379,11 +489,12 @@ fun BackupAndSettingsScreen(
                                 onClick = {
                                     btAddress = ""
                                     btName = ""
+                                    hasEditedSettings = true
                                 },
                                 modifier = Modifier.minimumInteractiveComponentSize()
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.DeleteOutline,
+                                    imageVector = AppIcons.DeleteOutline,
                                     contentDescription = "إزالة الطابعة",
                                     tint = MaterialTheme.colorScheme.error,
                                     modifier = Modifier.size(18.dp)
@@ -401,7 +512,7 @@ fun BackupAndSettingsScreen(
                                 }
                             }
                         ) {
-                            Icon(Icons.Filled.Bluetooth, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(AppIcons.Bluetooth, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(3.dp))
                             Text("جلب البلوتوث")
                         }
@@ -414,6 +525,7 @@ fun BackupAndSettingsScreen(
                                 onClick = {
                                     btAddress = dev.address
                                     btName = dev.name
+                                    hasEditedSettings = true
                                 },
                                 label = { Text("${dev.name} (${dev.address})") },
                                 modifier = Modifier.fillMaxWidth()
@@ -424,7 +536,7 @@ fun BackupAndSettingsScreen(
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         OutlinedTextField(
                             value = wifiHost,
-                            onValueChange = { wifiHost = NumberFormatUtils.toEnglishDigits(it) },
+                            onValueChange = { wifiHost = NumberFormatUtils.toEnglishDigits(it); hasEditedSettings = true },
                             label = { Text("IP الطابعة الشبكية") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -432,7 +544,10 @@ fun BackupAndSettingsScreen(
                         )
                         OutlinedTextField(
                             value = wifiPortText,
-                            onValueChange = { wifiPortText = NumberFormatUtils.toEnglishDigits(it).filter { ch -> ch.isDigit() } },
+                            onValueChange = {
+                                wifiPortText = NumberFormatUtils.toEnglishDigits(it).filter { ch -> ch.isDigit() }
+                                hasEditedSettings = true
+                            },
                             label = { Text("المنفذ") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -448,18 +563,7 @@ fun BackupAndSettingsScreen(
                             onClick = {
                                 scope.launch {
                                     runCatching {
-                                        val settings = PrinterSettingsStore.load(context).copy(
-                                            storeName = storeName,
-                                            storeSubtitle = storeSubtitle,
-                                            storePhone = storePhone,
-                                            storeBadgeText = storeBadgeText,
-                                            footerPolicy = footerPolicy,
-                                            paperWidthMm = paperWidthMm,
-                                            wifiHost = wifiHost,
-                                            wifiPort = wifiPortText.toIntOrNull() ?: 9100,
-                                            bluetoothName = btName,
-                                            bluetoothAddress = btAddress
-                                        )
+                                        val settings = currentPrinterSettings()
                                         val testBmp = ReceiptRenderer4K.renderInvoiceReceipt4K(
                                             context = context,
                                             invoice = Invoice(
@@ -504,28 +608,15 @@ fun BackupAndSettingsScreen(
                                 .weight(1f)
                                 .height(44.dp)
                         ) {
-                            Icon(Icons.Filled.Print, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.Print, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("طباعة اختبار", maxLines = 1)
                         }
 
                         Button(
                             onClick = {
-                                PrinterSettingsStore.save(
-                                    context,
-                                    initialSettings.copy(
-                                        storeName = storeName,
-                                        storeSubtitle = storeSubtitle,
-                                        storePhone = storePhone,
-                                        storeBadgeText = storeBadgeText,
-                                        footerPolicy = footerPolicy,
-                                        paperWidthMm = paperWidthMm,
-                                        wifiHost = wifiHost,
-                                        wifiPort = wifiPortText.toIntOrNull() ?: 9100,
-                                        bluetoothName = btName,
-                                        bluetoothAddress = btAddress
-                                    )
-                                )
+                                PrinterSettingsStore.save(context, currentPrinterSettings())
+                                settingsAutoSaved = true
                                 onShowMessage("تم حفظ إعدادات الطابعة بنجاح")
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = LedgerNavy),
@@ -534,7 +625,7 @@ fun BackupAndSettingsScreen(
                                 .weight(1.2f)
                                 .height(44.dp)
                         ) {
-                            Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(AppIcons.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text("حفظ الإعدادات", maxLines = 1)
                         }
@@ -560,7 +651,7 @@ fun BackupAndSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = if (isCloudMode) Icons.Filled.CloudDone else Icons.Filled.PhoneAndroid,
+                            imageVector = if (isCloudMode) AppIcons.CloudDone else AppIcons.PhoneAndroid,
                             contentDescription = null,
                             tint = if (isCloudMode) EmeraldAccent else MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
@@ -624,7 +715,7 @@ fun BackupAndSettingsScreen(
                                 .height(44.dp)
                                 .testTag("link_google_account_button")
                         ) {
-                            Icon(imageVector = Icons.AutoMirrored.Filled.Login, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(imageVector = AppIcons.Login, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(if (isLinkingGoogle) "جاري الربط..." else "ربط حساب Google ومزامنة البيانات")
                         }
@@ -636,7 +727,7 @@ fun BackupAndSettingsScreen(
                                 .height(44.dp)
                                 .testTag("switch_to_local_button")
                         ) {
-                            Icon(imageVector = Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(imageVector = AppIcons.Logout, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("فصل حساب Google والعودة للوضع المحلي")
                         }
@@ -660,7 +751,7 @@ fun BackupAndSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Backup,
+                            imageVector = AppIcons.Backup,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
@@ -686,7 +777,7 @@ fun BackupAndSettingsScreen(
                                 .height(44.dp)
                                 .testTag("export_backup_button")
                         ) {
-                            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(AppIcons.Download, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(3.dp))
                             Text("تصدير نسخة", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
@@ -699,7 +790,7 @@ fun BackupAndSettingsScreen(
                                 .height(44.dp)
                                 .testTag("restore_backup_button")
                         ) {
-                            Icon(Icons.Filled.Restore, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(AppIcons.Restore, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(3.dp))
                             Text("استعادة نسخة", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
@@ -739,7 +830,7 @@ fun BackupAndSettingsScreen(
                                 .height(44.dp)
                                 .testTag("export_inventory_pdf_button")
                         ) {
-                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(15.dp))
+                            Icon(AppIcons.PictureAsPdf, contentDescription = null, modifier = Modifier.size(15.dp))
                             Spacer(modifier = Modifier.width(3.dp))
                             Text("تقرير جرد PDF", maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
@@ -782,7 +873,7 @@ fun BackupAndSettingsScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Storage,
+                            imageVector = AppIcons.Storage,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)

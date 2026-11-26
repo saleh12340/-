@@ -2,6 +2,7 @@ package com.example.ui.theme
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
@@ -78,8 +79,11 @@ fun WarehouseLedgerTheme(
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Rtl) {
         MaterialTheme(
             colorScheme = colorScheme,
-            typography = AppTypography,
-            content = content
-        )
+            typography = AppTypography
+        ) {
+            CompositionLocalProvider(LocalTextStyle provides AppTypography.bodyMedium) {
+                content()
+            }
+        }
     }
 }

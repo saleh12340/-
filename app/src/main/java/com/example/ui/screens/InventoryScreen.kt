@@ -19,11 +19,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.WarningAmber
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -377,7 +375,7 @@ private fun ProductTableRow(
         ) {
             if (isLow) {
                 Icon(
-                    imageVector = Icons.Filled.WarningAmber,
+                    imageVector = AppIcons.WarningAmber,
                     contentDescription = "مخزون منخفض",
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(15.dp)
@@ -511,7 +509,7 @@ private fun ProductTableRow(
                     .testTag("delete_product_${product.id}")
             ) {
                 Icon(
-                    imageVector = Icons.Filled.DeleteOutline,
+                    imageVector = AppIcons.DeleteOutline,
                     contentDescription = "حذف الصنف",
                     tint = MaterialTheme.colorScheme.error,
                     modifier = Modifier.size(15.dp)
@@ -590,7 +588,7 @@ private fun ProductCard(
                             .testTag("delete_product_${product.id}")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.DeleteOutline,
+                            imageVector = AppIcons.DeleteOutline,
                             contentDescription = "حذف ${product.name}",
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(20.dp)
@@ -655,7 +653,7 @@ private fun ProductCard(
                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.WarningAmber,
+                                imageVector = AppIcons.WarningAmber,
                                 contentDescription = null,
                                 tint = OnAmberContainer,
                                 modifier = Modifier.size(13.dp)
@@ -720,7 +718,7 @@ private fun EmptyInventoryState(onAddClick: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Icon(
-                imageVector = Icons.Filled.Inventory2,
+                imageVector = AppIcons.Inventory2,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.primary,
                 modifier = Modifier.size(48.dp)

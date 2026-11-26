@@ -1,8 +1,11 @@
 package com.example
 
 import com.example.data.BackupJsonCodec
+import com.example.data.InvoiceDraftAutoSaveStore
 import com.example.data.InvoiceDraftLine
 import com.example.data.LocalWarehouseDataSource
+import com.example.data.SavedInvoiceDraft
+import com.example.data.SavedInvoiceDraftLine
 import com.example.domain.ContactType
 import com.example.domain.Invoice
 import com.example.domain.InvoiceLine
@@ -18,8 +21,11 @@ import com.example.ui.state.WarehouseViewModel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
+import java.nio.file.Files
 
 class InvoiceModeTest {
 
@@ -400,6 +406,12 @@ class InvoiceModeTest {
 
         val escPos = EscPosPrinter.packMonochromeRowsToEscPosRaster(width = 8, height = 1) { x, _ -> x == 0 }
         assertTrue(escPos.isNotEmpty())
+        val tail = escPos.takeLast(7).toByteArray()
+        assertTrue(
+            tail.contentEquals(
+                byteArrayOf(0x1B, 0x64, 0x02, 0x1D, 0x56, 0x42, 0x00)
+            )
+        )
     }
 
     // Scenario 10: التوافق الكامل مع الفواتير القديمة والبيانات الموجودة قبل التطوير
@@ -560,5 +572,106 @@ class InvoiceModeTest {
         assertEquals(60.0, afterSave.first { it.name == "مكرونة" }.stockBaseQty, 1e-9) // 3*20
         assertEquals(10.0, afterSave.first { it.name == "شاي فاخر" }.stockBaseQty, 1e-9)
     }
+
+    @Test
+    fun `12_fast_autosave_invoice_draft_empty_check_snapshot_and_settings_default`() {
+        val emptyDraft = SavedInvoiceDraft()
+        assertTrue(emptyDraft.isEffectivelyEmpty)
+        assertTrue(SavedInvoiceDraft(isPaidManuallyEdited = false, paidInput = "0").isEffectivelyEmpty)
+        assertFalse(SavedInvoiceDraft(isPaidManuallyEdited = true, paidInput = "250").isEffectivelyEmpty)
+        assertFalse(SavedInvoiceDraft(draftSearchQuery = "أرز").isEffectivelyEmpty)
+        assertFalse(SavedInvoiceDraft(manualCustomerName = "عميل سريع").isEffectivelyEmpty)
+
+        val line = SavedInvoiceDraftLine(
+            productId = "draft_1",
+            productName = "مناديل ناعمة",
+            baseUnitName = "حبة",
+            defaultUnitName = "كرتون",
+            unitTiers = listOf(UnitTier("كرتون", 24.0)),
+            baseCost = 100.0,
+            baseSellPrice = 130.0,
+            stockBaseQty = 0.0,
+            unitName = "كرتون",
+            cumulativeFactor = 24.0,
+            unitQty = 2.0,
+            unitPrice = 2500.0,
+            description = "عبوة التوفير",
+            qtyText = "2",
+            totalText = "5000",
+            explicitTotal = 5000.0
+        )
+        val draft = SavedInvoiceDraft(
+            editingInvoiceId = "inv_edit_42",
+            invoiceType = InvoiceType.PURCHASE,
+            invoiceMode = InvoiceMode.FREE,
+            paymentMethod = PaymentMethod.CREDIT,
+            lines = listOf(line)
+        )
+        assertFalse(draft.isEffectivelyEmpty)
+
+        val snapshot = line.toProductSnapshot()
+        assertEquals("مناديل ناعمة", snapshot.name)
+        assertEquals("حبة", snapshot.baseUnitName)
+        assertEquals("كرتون", snapshot.defaultUnitName)
+        assertEquals(1, snapshot.unitTiers.size)
+        assertEquals(24.0, snapshot.unitTiers.single().factorToPrevious, 1e-9)
+
+        val defaultSettings = com.example.print.PrinterSettings()
+        assertTrue(defaultSettings.fastAutoSaveEnabled)
+        assertFalse(defaultSettings.copy(fastAutoSaveEnabled = false).fastAutoSaveEnabled)
+    }
+
+    @Test
+    fun `13_fast_autosave_local_db_recovers_from_rolling_bak_when_primary_file_is_corrupted`() = runBlocking {
+        val tempDir = Files.createTempDirectory("autosave_bak_test").toFile()
+        val pureJvmEncode: (com.example.data.BackupBundle) -> String = { bundle ->
+            "VALID|" + bundle.products.joinToString(";") { "${it.id}:${it.name}:${it.stockBaseQty}" }
+        }
+        val pureJvmDecode: (String) -> com.example.data.BackupBundle = { raw ->
+            require(raw.startsWith("VALID|")) { "Corrupted snapshot" }
+            val payload = raw.removePrefix("VALID|")
+            val prods = if (payload.isBlank()) emptyList() else payload.split(";").map { part ->
+                val cols = part.split(":")
+                Product(id = cols[0], userId = "u1", name = cols[1], stockBaseQty = cols[2].toDouble())
+            }
+            com.example.data.BackupBundle(
+                schemaVersion = 1,
+                exportedAtMillis = 0L,
+                products = prods,
+                contacts = emptyList(),
+                invoices = emptyList(),
+                payments = emptyList()
+            )
+        }
+        try {
+            val primaryFile = File(tempDir, "warehouse_local_db.json")
+            val ds = LocalWarehouseDataSource(primaryFile, pureJvmEncode, pureJvmDecode)
+            ds.saveProduct(
+                userId = "u1", existingId = null, name = "دقيق أبيض", barcode = "3001",
+                baseUnitName = "كيلو", defaultUnitName = "كيس",
+                unitTiers = listOf(UnitTier("كيس", 25.0)),
+                baseCost = 200.0, baseSellPrice = 260.0, stockBaseQty = 50.0,
+                trackExpiry = false, expiryDate = "", minStockAlert = 5.0
+            ).getOrThrow()
+            // Second write creates rolling .bak snapshot of previous clean state
+            ds.saveContact("u1", null, "بقالة الأمانة", ContactType.CUSTOMER, "777000111", 0.0, "").getOrThrow()
+
+            val backupFile = File(tempDir, "warehouse_local_db.json.bak")
+            assertTrue(primaryFile.exists())
+            assertTrue(backupFile.exists())
+
+            // Simulate sudden power-loss truncating primary DB file
+            primaryFile.writeText("{corrupted_truncated", Charsets.UTF_8)
+
+            val recoveredDs = LocalWarehouseDataSource(primaryFile, pureJvmEncode, pureJvmDecode)
+            val recoveredProducts = recoveredDs.observeProducts("u1").first()
+            assertEquals(1, recoveredProducts.size)
+            assertEquals("دقيق أبيض", recoveredProducts.single().name)
+            assertEquals(50.0, recoveredProducts.single().stockBaseQty, 1e-9)
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
 }
+
 

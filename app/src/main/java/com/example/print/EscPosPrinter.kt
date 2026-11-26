@@ -44,7 +44,8 @@ data class PrinterSettings(
     val wifiHost: String = "192.168.1.100",
     val wifiPort: Int = 9100,
     val bluetoothName: String = "",
-    val bluetoothAddress: String = ""
+    val bluetoothAddress: String = "",
+    val fastAutoSaveEnabled: Boolean = true
 )
 
 object PrinterSettingsStore {
@@ -65,7 +66,8 @@ object PrinterSettingsStore {
             wifiHost = prefs.getString("wifi_host", "192.168.1.100") ?: "192.168.1.100",
             wifiPort = prefs.getInt("wifi_port", 9100),
             bluetoothName = prefs.getString("bt_name", "") ?: "",
-            bluetoothAddress = prefs.getString("bt_address", "") ?: ""
+            bluetoothAddress = prefs.getString("bt_address", "") ?: "",
+            fastAutoSaveEnabled = prefs.getBoolean("fast_auto_save_enabled", true)
         )
     }
 
@@ -81,6 +83,7 @@ object PrinterSettingsStore {
             .putInt("wifi_port", settings.wifiPort.coerceIn(1, 65535))
             .putString("bt_name", settings.bluetoothName)
             .putString("bt_address", settings.bluetoothAddress)
+            .putBoolean("fast_auto_save_enabled", settings.fastAutoSaveEnabled)
             .apply()
     }
 }
@@ -191,8 +194,8 @@ object EscPosPrinter {
             yStart += bandHeight
         }
 
-        // Feed 4 lines & Paper Cut (GS V 66 0)
-        out.write(byteArrayOf(0x1B, 0x64, 0x04))
+        // Feed 2 lines (minimal cutter clearance) & Paper Cut (GS V 66 0)
+        out.write(byteArrayOf(0x1B, 0x64, 0x02))
         out.write(byteArrayOf(0x1D, 0x56, 0x42, 0x00))
         return out.toByteArray()
     }
@@ -303,13 +306,11 @@ object EscPosPrinter {
                 val doc = PdfDocument()
                 try {
                     val pageWidth = 595
-                    val pageHeight = (bitmap4K.height * (pageWidth.toFloat() / bitmap4K.width))
-                        .toInt()
-                        .coerceAtLeast(842)
+                    val drawHeight = bitmap4K.height * (pageWidth.toFloat() / bitmap4K.width)
+                    val pageHeight = drawHeight.toInt().coerceAtLeast(120)
                     val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, 1).create()
                     val page = doc.startPage(pageInfo)
                     page.canvas.drawColor(Color.WHITE)
-                    val drawHeight = bitmap4K.height * (pageWidth.toFloat() / bitmap4K.width)
                     page.canvas.drawBitmap(
                         bitmap4K,
                         null,

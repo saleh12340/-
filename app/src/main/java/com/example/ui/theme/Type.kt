@@ -16,25 +16,30 @@ val AmiriFontFamily = FontFamily(
     Font(R.font.amiri, FontWeight.ExtraBold)
 )
 
-val CairoFontFamily = FontFamily(
-    Font(R.font.cairo, FontWeight.Normal),
-    Font(R.font.cairo, FontWeight.Medium),
-    Font(R.font.cairo, FontWeight.SemiBold),
-    Font(R.font.cairo, FontWeight.Bold)
-)
-
-val TajawalFontFamily = FontFamily(
-    Font(R.font.tajawal, FontWeight.Normal),
-    Font(R.font.tajawal, FontWeight.Medium),
-    Font(R.font.tajawal, FontWeight.Bold)
-)
-
 val AppTypography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = AmiriFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 36.sp,
+        lineHeight = 46.sp
+    ),
+    displayMedium = TextStyle(
+        fontFamily = AmiriFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 32.sp,
+        lineHeight = 42.sp
+    ),
     displaySmall = TextStyle(
         fontFamily = AmiriFontFamily,
         fontWeight = FontWeight.Bold,
         fontSize = 28.sp,
         lineHeight = 38.sp
+    ),
+    headlineLarge = TextStyle(
+        fontFamily = AmiriFontFamily,
+        fontWeight = FontWeight.Bold,
+        fontSize = 26.sp,
+        lineHeight = 36.sp
     ),
     headlineMedium = TextStyle(
         fontFamily = AmiriFontFamily,

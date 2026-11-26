@@ -25,15 +25,11 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ReceiptLong
-import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
+import com.example.ui.theme.AppIcons
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -286,7 +282,7 @@ fun AccountsScreen(
                                     verticalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     Icon(
-                                        imageVector = Icons.Filled.AccountBalanceWallet,
+                                        imageVector = AppIcons.AccountBalanceWallet,
                                         contentDescription = null,
                                         tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(34.dp)
@@ -410,7 +406,7 @@ fun AccountsScreen(
                                             .testTag("delete_payment_${payment.id}")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Filled.DeleteOutline,
+                                            imageVector = AppIcons.DeleteOutline,
                                             contentDescription = "حذف السند",
                                             tint = MaterialTheme.colorScheme.error,
                                             modifier = Modifier.size(18.dp)
@@ -688,7 +684,7 @@ private fun CustomerLedgerOperationsScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ReceiptLong,
+                        imageVector = AppIcons.ReceiptLong,
                         contentDescription = null,
                         tint = LedgerNavy,
                         modifier = Modifier.size(44.dp)
@@ -918,7 +914,7 @@ private fun CustomerLedgerOperationsScreen(
                                             modifier = Modifier.size(28.dp)
                                         ) {
                                             Icon(
-                                                imageVector = Icons.Filled.Print,
+                                                imageVector = AppIcons.Print,
                                                 contentDescription = "طباعة",
                                                 tint = LedgerNavy,
                                                 modifier = Modifier.size(15.dp)
@@ -1132,7 +1128,7 @@ private fun ContactLedgerCard(
                             .testTag("delete_contact_${contact.id}")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.DeleteOutline,
+                            imageVector = AppIcons.DeleteOutline,
                             contentDescription = "حذف ${contact.name}",
                             tint = MaterialTheme.colorScheme.error,
                             modifier = Modifier.size(19.dp)
@@ -1152,7 +1148,7 @@ private fun ContactLedgerCard(
                         .weight(1f)
                         .height(48.dp)
                 ) {
-                    Icon(imageVector = Icons.Filled.Payments, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Icon(imageVector = AppIcons.Payments, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(3.dp))
                     Text("سداد", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
                 }
@@ -1165,7 +1161,7 @@ private fun ContactLedgerCard(
                         .height(48.dp)
                         .testTag("contact_operations_button_${contact.id}")
                 ) {
-                    Icon(imageVector = Icons.AutoMirrored.Filled.ReceiptLong, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Icon(imageVector = AppIcons.ReceiptLong, contentDescription = null, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(3.dp))
                     Text("العمليات", maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelMedium)
                 }
