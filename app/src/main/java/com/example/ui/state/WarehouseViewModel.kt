@@ -388,6 +388,8 @@ class WarehouseViewModel(
         contactName: String,
         lines: List<InvoiceDraftLine>,
         notes: String,
+        discount: Double = 0.0,
+        paidAmount: Double? = null,
         onSuccess: () -> Unit
     ) {
         if (_isBusy.value) return
@@ -401,12 +403,19 @@ class WarehouseViewModel(
                 contactId = contactId,
                 contactName = contactName,
                 draftLines = lines,
-                notes = notes
+                notes = notes,
+                discount = discount,
+                paidAmount = paidAmount
             ).onSuccess { createdInvoice ->
-                _actionMessage.value = if (invoiceType == InvoiceType.PURCHASE) {
-                    "تم اعتماد فاتورة الشراء وتحديث المخزون والتكلفة"
-                } else {
-                    "تم اعتماد فاتورة البيع وخصم المخزون بنجاح"
+                _actionMessage.value = when {
+                    invoiceType == InvoiceType.PURCHASE && createdInvoice.resolvedMode == com.example.domain.InvoiceMode.FREE ->
+                        "تم حفظ فاتورة الشراء الحرة وإضافة الأصناف للمخزون بنجاح"
+                    invoiceType == InvoiceType.PURCHASE ->
+                        "تم اعتماد فاتورة الشراء وتحديث المخزون والتكلفة"
+                    createdInvoice.resolvedMode == com.example.domain.InvoiceMode.FREE ->
+                        "تم حفظ فاتورة البيع الحرة بنجاح (بدون تعديل المخزون)"
+                    else ->
+                        "تم اعتماد فاتورة البيع وخصم المخزون بنجاح"
                 }
                 _activeReceiptInvoice.value = createdInvoice
                 onSuccess()
@@ -426,6 +435,8 @@ class WarehouseViewModel(
         contactName: String,
         lines: List<InvoiceDraftLine>,
         notes: String,
+        discount: Double = 0.0,
+        paidAmount: Double? = null,
         onSuccess: () -> Unit
     ) {
         if (_isBusy.value) return
@@ -440,9 +451,17 @@ class WarehouseViewModel(
                 contactId = contactId,
                 contactName = contactName,
                 draftLines = lines,
-                notes = notes
+                notes = notes,
+                discount = discount,
+                paidAmount = paidAmount
             ).onSuccess { updatedInvoice ->
-                _actionMessage.value = "تم تحديث الفاتورة #${updatedInvoice.invoiceNumber} وضبط المخزون والأرصدة"
+                _actionMessage.value = if (updatedInvoice.resolvedMode == com.example.domain.InvoiceMode.FREE &&
+                    updatedInvoice.resolvedType == InvoiceType.SALE
+                ) {
+                    "تم تحديث الفاتورة الحرة #${updatedInvoice.invoiceNumber} وضبط الحساب"
+                } else {
+                    "تم تحديث الفاتورة #${updatedInvoice.invoiceNumber} وضبط المخزون والأرصدة"
+                }
                 onSuccess()
             }.onFailure {
                 _actionMessage.value = it.localizedMessage ?: "تعذر تحديث الفاتورة"

@@ -137,12 +137,19 @@ object ReceiptRenderer4K {
         val dateText = dateFormatter.format(invoice.createdAt?.toDate() ?: Date())
 
         val lineCount = maxOf(1, invoice.lines.size)
-        val rowHeight = 84f
+        val rowHeights = (0 until lineCount).map { idx ->
+            val desc = invoice.lines.getOrNull(idx)?.description.orEmpty()
+            if (desc.isNotBlank()) 118f else 84f
+        }
+        val rowsTotalHeight = rowHeights.sum()
         val tableHeaderH = 78f
-        val summaryBoxH = 112f
+        val showAccountingBreakdown = invoice.discount > 0.0 ||
+            invoice.resolvedRemainingAmount > 0.0001 ||
+            (invoice.paidAmount != null && kotlin.math.abs(invoice.resolvedPaidAmount - invoice.totalAmount) > 0.0001)
+        val summaryBoxH = if (showAccountingBreakdown) 174f else 112f
         val notesH = if (invoice.notes.isNotBlank()) 76f else 0f
 
-        val cardHeight = 406f + tableHeaderH + (lineCount * rowHeight) + summaryBoxH + notesH + 220f
+        val cardHeight = 406f + tableHeaderH + rowsTotalHeight + summaryBoxH + notesH + 220f
         val totalHeight = (outerPad * 2 + cardHeight).toInt().coerceAtLeast(1380)
 
         val bitmap = Bitmap.createBitmap(width, totalHeight, Bitmap.Config.ARGB_8888)
@@ -207,46 +214,46 @@ object ReceiptRenderer4K {
         y += 38f
 
         // 2. Metadata Row 1: "المطلوب من الأخ/" + dotted customer field | "فاتورة بيع/شراء" pill + cash/credit radios
-        val pillWidth = 230f
+        val pillWidth = 340f
         val pillHeight = 64f
-        val radioTextPaint = TextPaint(bodyRight).apply { textSize = 34f }
+        val radioTextPaint = TextPaint(bodyRight).apply { textSize = 32f }
 
         // Radios on the left
-        val creditCircleX = innerLeft + 24f
+        val creditCircleX = innerLeft + 22f
         val radioCenterY = y + 32f
         // Credit radio
-        canvas.drawCircle(creditCircleX, radioCenterY, 16f, Paint(borderPaint).apply { strokeWidth = 3f })
+        canvas.drawCircle(creditCircleX, radioCenterY, 15f, Paint(borderPaint).apply { strokeWidth = 3f })
         if (!isCash) {
             fillPaint.color = navy
-            canvas.drawCircle(creditCircleX, radioCenterY, 9f, fillPaint)
+            canvas.drawCircle(creditCircleX, radioCenterY, 8f, fillPaint)
         }
-        canvas.drawText("آجل", creditCircleX + 26f, radioCenterY + 12f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
+        canvas.drawText("آجل", creditCircleX + 22f, radioCenterY + 11f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
 
-        val cashCircleX = innerLeft + 150f
-        canvas.drawCircle(cashCircleX, radioCenterY, 16f, Paint(borderPaint).apply { strokeWidth = 3f })
+        val cashCircleX = innerLeft + 132f
+        canvas.drawCircle(cashCircleX, radioCenterY, 15f, Paint(borderPaint).apply { strokeWidth = 3f })
         if (isCash) {
             fillPaint.color = navy
-            canvas.drawCircle(cashCircleX, radioCenterY, 9f, fillPaint)
+            canvas.drawCircle(cashCircleX, radioCenterY, 8f, fillPaint)
         }
-        canvas.drawText("نقداً", cashCircleX + 26f, radioCenterY + 12f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
+        canvas.drawText("نقداً", cashCircleX + 22f, radioCenterY + 11f, TextPaint(radioTextPaint).apply { textAlign = Paint.Align.LEFT })
 
         // Invoice type dark navy pill
-        val typePillRect = RectF(innerLeft + 285f, y, innerLeft + 285f + pillWidth, y + pillHeight)
+        val typePillRect = RectF(innerLeft + 252f, y, innerLeft + 252f + pillWidth, y + pillHeight)
         fillPaint.color = navy
         canvas.drawRoundRect(typePillRect, 20f, 20f, fillPaint)
-        canvas.drawText(typeLabel, typePillRect.centerX(), typePillRect.centerY() + 12f, TextPaint(badgeTextPaint).apply { textSize = 32f })
+        canvas.drawText(typeLabel, typePillRect.centerX(), typePillRect.centerY() + 11f, TextPaint(badgeTextPaint).apply { textSize = 29f })
 
         // Customer / Supplier label & dotted line on right
-        val labelRightText = "المطلوب من الأخ/"
+        val labelRightText = if (isPurchase) "حساب المورد/" else "المطلوب من/"
         canvas.drawText(labelRightText, innerRight, y + 44f, bodyRight)
-        val partyStartRight = innerRight - bodyRight.measureText(labelRightText) - 24f
-        val partyLineLeft = typePillRect.right + 28f
+        val partyStartRight = innerRight - bodyRight.measureText(labelRightText) - 20f
+        val partyLineLeft = typePillRect.right + 24f
         canvas.drawLine(partyLineLeft, y + 54f, partyStartRight, y + 54f, dottedPaint)
         canvas.drawText(
-            invoice.contactName.ifBlank { "عميل نقدي" },
+            invoice.contactName.ifBlank { if (isPurchase) "مورد نقدي" else "عميل نقدي" },
             (partyLineLeft + partyStartRight) / 2f,
             y + 42f,
-            TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 36f }
+            TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 35f }
         )
 
         y += 90f
@@ -312,8 +319,15 @@ object ReceiptRenderer4K {
             style = Paint.Style.FILL
             color = Color.parseColor("#F8FAFC")
         }
+        val descRightPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = regularTf
+            textSize = 26f
+            color = slate
+            textAlign = Paint.Align.RIGHT
+        }
         for (idx in 0 until lineCount) {
-            val rowBottom = y + rowHeight
+            val rowH = rowHeights[idx]
+            val rowBottom = y + rowH
             if (idx % 2 == 1) {
                 canvas.drawRect(innerLeft, y, innerRight, rowBottom, zebraPaint)
             }
@@ -322,7 +336,7 @@ object ReceiptRenderer4K {
             canvas.drawLine(xQtyLeft, y, xQtyLeft, rowBottom, cellBorder)
             canvas.drawLine(xTotalLeft, y, xTotalLeft, rowBottom, cellBorder)
 
-            val centerY = y + rowHeight / 2f + 12f
+            val centerY = y + rowH / 2f + 12f
             if (idx < lines.size) {
                 val line = lines[idx]
                 val inferredUnitPrice = if (line.unitQty > 0.0) line.lineTotal / line.unitQty else line.unitPrice
@@ -339,12 +353,27 @@ object ReceiptRenderer4K {
                     centerY,
                     TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 33f }
                 )
-                canvas.drawText(
-                    "${idx + 1}. ${line.productName}",
-                    xQtyLeft - 24f,
-                    centerY,
-                    TextPaint(bodyRight).apply { textSize = 34f }
-                )
+                if (line.description.isNotBlank()) {
+                    canvas.drawText(
+                        "${idx + 1}. ${line.productName}",
+                        xQtyLeft - 24f,
+                        y + 46f,
+                        TextPaint(bodyRight).apply { textSize = 34f }
+                    )
+                    canvas.drawText(
+                        line.description.take(48),
+                        xQtyLeft - 24f,
+                        y + 88f,
+                        descRightPaint
+                    )
+                } else {
+                    canvas.drawText(
+                        "${idx + 1}. ${line.productName}",
+                        xQtyLeft - 24f,
+                        centerY,
+                        TextPaint(bodyRight).apply { textSize = 34f }
+                    )
+                }
                 canvas.drawText(
                     NumberFormatUtils.formatNumber(inferredUnitPrice),
                     xUnitPriceLeft + colUnitPriceW / 2f,
@@ -355,15 +384,18 @@ object ReceiptRenderer4K {
             y = rowBottom
         }
 
-        // 5. Totals Double Box ("الإجمالي الكلي" | "عدد الأصناف")
+        // 5. Totals Double Box ("الإجمالي الكلي" | "عدد الأصناف") + optional Discount / Paid / Remaining row
+        val mainSumH = 112f
+        val mainSumBottom = y + mainSumH
         val sumBottom = y + summaryBoxH
         val midX = (innerLeft + innerRight) / 2f
         val sumRect = RectF(innerLeft, y, innerRight, sumBottom)
         canvas.drawRoundRect(sumRect, 18f, 18f, cellBorder)
-        canvas.drawLine(midX, y, midX, sumBottom, cellBorder)
+        canvas.drawLine(midX, y, midX, mainSumBottom, cellBorder)
 
-        val sumCenterY = y + summaryBoxH / 2f + 14f
-        canvas.drawText("الإجمالي الكلي:", innerRight - 28f, sumCenterY, TextPaint(bodyRight).apply { textSize = 42f; color = navy })
+        val sumCenterY = y + mainSumH / 2f + 14f
+        val totalLabel = if (invoice.discount > 0.0) "الصافي النهائي:" else "الإجمالي الكلي:"
+        canvas.drawText(totalLabel, innerRight - 28f, sumCenterY, TextPaint(bodyRight).apply { textSize = 42f; color = navy })
         canvas.drawText(
             "${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال",
             midX + 28f,
@@ -378,6 +410,24 @@ object ReceiptRenderer4K {
             sumCenterY,
             TextPaint(bodyCenter).apply { textAlign = Paint.Align.LEFT; typeface = boldTf; textSize = 42f }
         )
+
+        if (showAccountingBreakdown) {
+            canvas.drawLine(innerLeft, mainSumBottom, innerRight, mainSumBottom, cellBorder)
+            val detailParts = buildList {
+                if (invoice.discount > 0.0) {
+                    add("قبل الخصم: ${NumberFormatUtils.formatNumber(invoice.subtotalAmount)}")
+                    add("الخصم: ${NumberFormatUtils.formatNumber(invoice.discount)}")
+                }
+                add("المدفوع: ${NumberFormatUtils.formatNumber(invoice.resolvedPaidAmount)}")
+                add("المتبقي: ${NumberFormatUtils.formatNumber(invoice.resolvedRemainingAmount)}")
+            }.joinToString("   |   ")
+            canvas.drawText(
+                detailParts,
+                width / 2f,
+                mainSumBottom + 42f,
+                TextPaint(bodyCenter).apply { typeface = boldTf; textSize = 29f; color = navy }
+            )
+        }
 
         y = sumBottom + 28f
 
@@ -609,7 +659,8 @@ object ReceiptRenderer4K {
         }
 
         val isPurchase = invoice.resolvedType == InvoiceType.PURCHASE
-        val typeText = if (isPurchase) "فاتورة شراء (جملة)" else "فاتورة بيع"
+        val modeBadge = if (invoice.resolvedMode == InvoiceMode.FREE) "حرة" else "من المخزن"
+        val typeText = (if (isPurchase) "فاتورة شراء" else "فاتورة بيع") + " • $modeBadge"
         val payText = if (invoice.resolvedPaymentMethod == PaymentMethod.CASH) "نقداً" else "آجل"
         val dateText = if (widthPx <= THERMAL_58MM_PX) {
             dateFormatter.format(invoice.createdAt?.toDate() ?: Date())
@@ -632,7 +683,8 @@ object ReceiptRenderer4K {
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
                 .setIncludePad(false)
                 .build()
-            val subText = "الواحدة: ${NumberFormatUtils.formatNumber(inferred)} | ${NumberFormatUtils.formatNumber(line.unitQty)} ${line.unitName}"
+            val descPart = if (line.description.isNotBlank()) "${line.description}\n" else ""
+            val subText = "${descPart}الواحدة: ${NumberFormatUtils.formatNumber(inferred)} | ${NumberFormatUtils.formatNumber(line.unitQty)} ${line.unitName}"
             val subLayout = StaticLayout.Builder
                 .obtain(subText, 0, subText.length, smallWrapPaint, colNameW - 8)
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL)
@@ -666,11 +718,17 @@ object ReceiptRenderer4K {
             .setIncludePad(false)
             .build()
 
+        val showDiscountRows = invoice.discount > 0.0
+        val showPaymentRows = showDiscountRows ||
+            invoice.resolvedRemainingAmount > 0.0001 ||
+            (invoice.paidAmount != null && kotlin.math.abs(invoice.resolvedPaidAmount - invoice.totalAmount) > 0.0001)
+        val extraTotalsRows = (if (showDiscountRows) 2 else 0) + (if (showPaymentRows) 2 else 0)
+
         val headerBlockH = (if (settings.storePhone.isNotBlank()) 136f else 108f) * scale
         val metaBlockH = (50f * scale) + partyLayout.height + (22f * scale)
         val tableHeaderH = (36f * scale).coerceAtLeast(28f)
         val itemsTotalH = itemLayouts.sumOf { it.third }.toFloat().coerceAtLeast(48f * scale)
-        val totalsBlockH = (92f * scale)
+        val totalsBlockH = ((92f + extraTotalsRows * 26f) * scale)
         val notesH = notesLayout?.let { it.height + 16f * scale } ?: 0f
         val footerH = footerLayout.height + (44f * scale)
 
@@ -793,11 +851,30 @@ object ReceiptRenderer4K {
         // 5. Totals Box
         y += (4f * scale)
         canvas.drawLine(leftX, y, rightX, y, solidLinePaint)
-        y += (30f * scale)
+        y += (26f * scale)
 
-        canvas.drawText("الإجمالي الكلي:", rightX, y, TextPaint(rightBoldPaint).apply { textSize = (23f * scale).coerceAtLeast(17f) })
+        if (showDiscountRows) {
+            canvas.drawText("قبل الخصم:", rightX, y, rightPaint)
+            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.subtotalAmount)} ريال", leftX, y, leftPaint)
+            y += (24f * scale)
+            canvas.drawText("الخصم:", rightX, y, rightPaint)
+            canvas.drawText("-${NumberFormatUtils.formatNumber(invoice.discount)} ريال", leftX, y, leftPaint)
+            y += (26f * scale)
+        }
+
+        canvas.drawText(if (showDiscountRows) "الصافي الكلي:" else "الإجمالي الكلي:", rightX, y, TextPaint(rightBoldPaint).apply { textSize = (23f * scale).coerceAtLeast(17f) })
         canvas.drawText("${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال", leftX, y, totalPaint)
-        y += (28f * scale)
+        y += (26f * scale)
+
+        if (showPaymentRows) {
+            canvas.drawText("المدفوع:", rightX, y, rightPaint)
+            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.resolvedPaidAmount)} ريال", leftX, y, leftBoldPaint)
+            y += (24f * scale)
+            canvas.drawText("المتبقي:", rightX, y, rightBoldPaint)
+            canvas.drawText("${NumberFormatUtils.formatNumber(invoice.resolvedRemainingAmount)} ريال", leftX, y, leftBoldPaint)
+            y += (26f * scale)
+        }
+
         canvas.drawText("عدد الأصناف:", rightX, y, rightPaint)
         canvas.drawText("${invoice.lines.size}", leftX, y, leftBoldPaint)
         y += (14f * scale)

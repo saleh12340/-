@@ -27,7 +27,8 @@ object ShareHelper {
         storeName: String = "حسابات المخزن"
     ): String = buildString {
         val isPurchase = invoice.resolvedType == InvoiceType.PURCHASE
-        val typeLabel = if (isPurchase) "فاتورة شراء (جملة)" else "فاتورة بيع"
+        val modeLabel = if (invoice.resolvedMode == com.example.domain.InvoiceMode.FREE) "حرة" else "من المخزن"
+        val typeLabel = (if (isPurchase) "فاتورة شراء (جملة)" else "فاتورة بيع") + " • $modeLabel"
         val payLabel = if (invoice.resolvedPaymentMethod == PaymentMethod.CASH) "نقداً" else "آجل"
         val partyLabel = if (isPurchase) "المورد" else "العميل"
         val dt = dateFormatter.format(invoice.createdAt?.toDate() ?: Date())
@@ -40,11 +41,24 @@ object ShareHelper {
         appendLine("──────────────")
         invoice.lines.forEachIndexed { i, line ->
             appendLine("${i + 1}. *${line.productName}*")
+            if (line.description.isNotBlank()) {
+                appendLine("   الوصف: ${line.description}")
+            }
             appendLine("   ${NumberFormatUtils.formatNumber(line.unitQty)} ${line.unitName} × ${NumberFormatUtils.formatNumber(line.unitPrice)} = *${NumberFormatUtils.formatNumber(line.lineTotal)} ريال*")
             appendLine("   (الكمية الأساسية: ${NumberFormatUtils.formatNumber(line.baseQty)})")
         }
         appendLine("──────────────")
-        appendLine("*الإجمالي النهائي: ${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال*")
+        if (invoice.discount > 0.0) {
+            appendLine("الإجمالي قبل الخصم: ${NumberFormatUtils.formatNumber(invoice.subtotalAmount)} ريال")
+            appendLine("الخصم: ${NumberFormatUtils.formatNumber(invoice.discount)} ريال")
+            appendLine("*الصافي النهائي: ${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال*")
+        } else {
+            appendLine("*الإجمالي النهائي: ${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال*")
+        }
+        if (invoice.discount > 0.0 || invoice.resolvedRemainingAmount > 0.0001 || invoice.paidAmount != null) {
+            appendLine("المدفوع: ${NumberFormatUtils.formatNumber(invoice.resolvedPaidAmount)} ريال")
+            appendLine("المتبقي: ${NumberFormatUtils.formatNumber(invoice.resolvedRemainingAmount)} ريال")
+        }
         if (invoice.notes.isNotBlank()) {
             appendLine("ملاحظات: ${invoice.notes}")
         }

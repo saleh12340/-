@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import com.example.domain.Contact
 import com.example.domain.ContactType
 import com.example.domain.Invoice
+import com.example.domain.InvoiceMode
 import com.example.domain.InvoiceType
 import com.example.domain.NumberFormatUtils
 import com.example.domain.Payment
@@ -104,8 +105,25 @@ private sealed class LedgerOpItem {
         override val id: String get() = invoice.id
         override val timestamp: Long get() = invoice.createdAt?.toDate()?.time ?: 0L
         override val dateStr: String get() = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(invoice.createdAt?.toDate() ?: Date())
-        override val title: String get() = "فاتورة #${invoice.invoiceNumber} (${if (invoice.resolvedType == InvoiceType.PURCHASE) "شراء جملة" else "بيع"})"
-        override val subtitle: String get() = "${if (invoice.resolvedPaymentMethod == PaymentMethod.CASH) "نقداً" else "آجل"} • ${invoice.lines.size} أصناف"
+        override val title: String
+            get() {
+                val typeLabel = if (invoice.resolvedType == InvoiceType.PURCHASE) "شراء جملة" else "بيع"
+                val modeLabel = if (invoice.resolvedMode == InvoiceMode.FREE) "حرة" else "من المخزن"
+                return "فاتورة #${invoice.invoiceNumber} ($typeLabel • $modeLabel)"
+            }
+        override val subtitle: String
+            get() {
+                val payLabel = if (invoice.resolvedPaymentMethod == PaymentMethod.CASH) "نقداً" else "آجل"
+                val extra = buildList {
+                    if (invoice.discount > 0.0) add("خصم ${NumberFormatUtils.formatNumber(invoice.discount)}")
+                    if (invoice.resolvedRemainingAmount > 0.0001 && invoice.resolvedPaidAmount > 0.0001) {
+                        add("مدفوع ${NumberFormatUtils.formatNumber(invoice.resolvedPaidAmount)}")
+                        add("متبقي ${NumberFormatUtils.formatNumber(invoice.resolvedRemainingAmount)}")
+                    }
+                }
+                val base = "$payLabel • ${invoice.lines.size} أصناف"
+                return if (extra.isEmpty()) base else "$base • ${extra.joinToString(" • ")}"
+            }
         override val amount: Double get() = invoice.totalAmount
         override val notes: String get() = invoice.notes
         override val isInvoice: Boolean get() = true

@@ -94,6 +94,7 @@ enum class PaymentMethod {
 data class InvoiceLine(
     val productId: String = "",
     val productName: String = "",
+    val description: String = "",
     val unitName: String = "",
     val cumulativeFactor: Double = 1.0,
     val unitQty: Double = 0.0,
@@ -113,6 +114,8 @@ data class Invoice(
     val contactId: String = "",
     val contactName: String = "",
     val totalAmount: Double = 0.0,
+    val discount: Double = 0.0,
+    val paidAmount: Double? = null,
     val lines: List<InvoiceLine> = emptyList(),
     val notes: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -120,12 +123,30 @@ data class Invoice(
     // Defaults to STOCK so invoices saved before this field was introduced remain compatible.
     val invoiceMode: String = ""
 ) {
+    @get:com.google.firebase.firestore.Exclude
     val resolvedType: InvoiceType get() = InvoiceType.fromRaw(invoiceType)
+
+    @get:com.google.firebase.firestore.Exclude
     val resolvedPaymentMethod: PaymentMethod get() = PaymentMethod.fromRaw(paymentMethod)
+
     // Older free-sale invoices had no mode field but stored invoice-only lines with an empty productId.
+    @get:com.google.firebase.firestore.Exclude
     val resolvedMode: InvoiceMode get() = if (invoiceMode.isBlank()) {
         if (lines.any { it.productId.isBlank() }) InvoiceMode.FREE else InvoiceMode.STOCK
     } else InvoiceMode.fromRaw(invoiceMode)
+
+    @get:com.google.firebase.firestore.Exclude
+    val subtotalAmount: Double
+        get() = if (lines.isNotEmpty()) lines.sumOf { it.lineTotal } else (totalAmount + discount)
+
+    @get:com.google.firebase.firestore.Exclude
+    val resolvedPaidAmount: Double
+        get() = (paidAmount ?: if (resolvedPaymentMethod == PaymentMethod.CASH) totalAmount else 0.0)
+            .coerceAtLeast(0.0)
+
+    @get:com.google.firebase.firestore.Exclude
+    val resolvedRemainingAmount: Double
+        get() = (totalAmount - resolvedPaidAmount).coerceAtLeast(0.0)
 }
 
 @Keep

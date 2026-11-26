@@ -749,7 +749,24 @@ fun BackupAndSettingsScreen(
         }
 
         if (settingsSection == 0 || settingsSection == 3) {
-            // 5. Advanced System Diagnostics Card
+            // 5. Advanced System Diagnostics & Reports Card (Stock vs Free Sales/Purchases + Profit + Accounts)
+            val stockSales = invoices.filter { it.resolvedType == InvoiceType.SALE && it.resolvedMode == com.example.domain.InvoiceMode.STOCK }
+            val freeSales = invoices.filter { it.resolvedType == InvoiceType.SALE && it.resolvedMode == com.example.domain.InvoiceMode.FREE }
+            val stockPurchases = invoices.filter { it.resolvedType == InvoiceType.PURCHASE && it.resolvedMode == com.example.domain.InvoiceMode.STOCK }
+            val freePurchases = invoices.filter { it.resolvedType == InvoiceType.PURCHASE && it.resolvedMode == com.example.domain.InvoiceMode.FREE }
+
+            val productCostById = products.associate { it.id to it.baseCost }
+            val estimatedStockGrossProfit = stockSales.sumOf { inv ->
+                val lineCost = inv.lines.sumOf { line ->
+                    val unitCost = productCostById[line.productId] ?: 0.0
+                    line.baseQty * unitCost
+                }
+                inv.totalAmount - lineCost
+            }
+            val totalDiscounts = invoices.sumOf { it.discount }
+            val totalCustomerReceivables = contacts.filter { it.resolvedType == com.example.domain.ContactType.CUSTOMER }.sumOf { it.balance }
+            val totalSupplierPayables = contacts.filter { it.resolvedType == com.example.domain.ContactType.SUPPLIER }.sumOf { it.balance }
+
             Card(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -771,7 +788,7 @@ fun BackupAndSettingsScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Text(
-                            text = "الإعدادات المتقدمة وإحصائيات النظام",
+                            text = "التقارير والأرباح والحسابات وإحصائيات النظام",
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold
                         )
@@ -782,11 +799,43 @@ fun BackupAndSettingsScreen(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("• الأصناف المسجلة: ${products.size}", style = MaterialTheme.typography.bodySmall)
-                            Text("• الحسابات (عملاء وموردين): ${contacts.size}", style = MaterialTheme.typography.bodySmall)
-                            Text("• الفواتير المحفوظة: ${invoices.size}", style = MaterialTheme.typography.bodySmall)
-                            Text("• سندات السداد: ${payments.size}", style = MaterialTheme.typography.bodySmall)
+                        Column(modifier = Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("• الأصناف: ${products.size} | الحسابات: ${contacts.size} | السندات: ${payments.size}", style = MaterialTheme.typography.bodySmall)
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            Text(
+                                "• مبيعات المخزن (${stockSales.size}): ${NumberFormatUtils.formatNumber(stockSales.sumOf { it.totalAmount })} ر",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "• المبيعات الحرة (${freeSales.size}): ${NumberFormatUtils.formatNumber(freeSales.sumOf { it.totalAmount })} ر",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "• مشتريات المخزن (${stockPurchases.size}): ${NumberFormatUtils.formatNumber(stockPurchases.sumOf { it.totalAmount })} ر",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                "• المشتريات الحرة (${freePurchases.size}): ${NumberFormatUtils.formatNumber(freePurchases.sumOf { it.totalAmount })} ر",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                            Text(
+                                "• ربح مبيعات المخزن التقديري: ${NumberFormatUtils.formatNumber(estimatedStockGrossProfit)} ر",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldAccent
+                            )
+                            Text(
+                                "• إجمالي الخصومات الممنوحة/المكتسبة: ${NumberFormatUtils.formatNumber(totalDiscounts)} ر",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                "• ذمم العملاء: ${NumberFormatUtils.formatNumber(totalCustomerReceivables)} ر | مستحقات الموردين: ${NumberFormatUtils.formatNumber(totalSupplierPayables)} ر",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
                 }

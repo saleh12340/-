@@ -212,8 +212,15 @@ fun ReceiptActionDialog(
                                 )
                             }
                         }
+                        val modeBadge = if (invoice.resolvedMode == com.example.domain.InvoiceMode.FREE) "حرة" else "من المخزن"
+                        val summaryLine = buildString {
+                            append("$modeBadge • الإجمالي: ${NumberFormatUtils.formatNumber(invoice.totalAmount)} ر")
+                            if (invoice.resolvedRemainingAmount > 0.0001) {
+                                append(" • متبقي: ${NumberFormatUtils.formatNumber(invoice.resolvedRemainingAmount)} ر")
+                            }
+                        }
                         Text(
-                            text = "الإجمالي: ${NumberFormatUtils.formatNumber(invoice.totalAmount)} ريال",
+                            text = summaryLine,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

@@ -19,7 +19,9 @@ data class InvoiceDraftLine(
     // Present only for a not-yet-committed purchase item or a free-sale line.
     // It is transient UI payload and is never serialized into the invoice document.
     val draftProduct: Product? = null,
-    val invoiceMode: InvoiceMode = InvoiceMode.STOCK
+    val invoiceMode: InvoiceMode = InvoiceMode.STOCK,
+    val productName: String = "",
+    val description: String = ""
 )
 
 data class BackupBundle(
@@ -85,7 +87,9 @@ interface WarehouseDataSource {
         contactId: String,
         contactName: String,
         draftLines: List<InvoiceDraftLine>,
-        notes: String
+        notes: String,
+        discount: Double = 0.0,
+        paidAmount: Double? = null
     ): Result<Invoice>
 
     suspend fun updateInvoice(
@@ -97,7 +101,9 @@ interface WarehouseDataSource {
         contactId: String,
         contactName: String,
         draftLines: List<InvoiceDraftLine>,
-        notes: String
+        notes: String,
+        discount: Double = 0.0,
+        paidAmount: Double? = null
     ): Result<Invoice>
 
     suspend fun deleteInvoice(userId: String, invoiceId: String): Result<Unit>

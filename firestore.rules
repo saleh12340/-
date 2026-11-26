@@ -70,10 +70,11 @@ service cloud.firestore {
                'cumulativeFactor', 'unitQty', 'unitPrice', 'baseQty', 'lineTotal'
              ]) &&
              line.keys().hasOnly([
-               'productId', 'productName', 'unitName',
+               'productId', 'productName', 'description', 'unitName',
                'cumulativeFactor', 'unitQty', 'unitPrice', 'baseQty', 'lineTotal'
              ]) &&
-             isValidId(line.productId) &&
+             (line.productId == '' || isValidId(line.productId)) &&
+             (!('description' in line) || (line.description is string && line.description.size() <= 200)) &&
              line.productName is string && line.productName.size() >= 1 && line.productName.size() <= 120 &&
              line.unitName is string && line.unitName.size() >= 1 && line.unitName.size() <= 40 &&
              line.cumulativeFactor is number && line.cumulativeFactor > 0 &&
@@ -87,10 +88,13 @@ service cloud.firestore {
       return data.userId == userId &&
              data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 40 &&
              data.invoiceType in ['PURCHASE', 'SALE'] &&
+             (!('invoiceMode' in data) || data.invoiceMode in ['STOCK', 'FREE', '']) &&
              data.paymentMethod in ['CASH', 'CREDIT'] &&
              data.contactId is string && data.contactId.size() <= 128 &&
              data.contactName is string && data.contactName.size() <= 120 &&
              data.totalAmount is number && data.totalAmount >= 0 &&
+             (!('discount' in data) || (data.discount is number && data.discount >= 0)) &&
+             (!('paidAmount' in data) || (data.paidAmount is number && data.paidAmount >= 0)) &&
              data.lines is list && data.lines.size() >= 1 && data.lines.size() <= 50 &&
              isValidInvoiceLine(data.lines[0]) &&
              data.notes is string && data.notes.size() <= 300 &&
@@ -173,9 +177,9 @@ service cloud.firestore {
                            'createdAt', 'updatedAt'
                          ]) &&
                          incoming().keys().hasOnly([
-                           'userId', 'invoiceNumber', 'invoiceType', 'paymentMethod',
-                           'contactId', 'contactName', 'totalAmount', 'lines', 'notes',
-                           'createdAt', 'updatedAt'
+                           'userId', 'invoiceNumber', 'invoiceType', 'invoiceMode', 'paymentMethod',
+                           'contactId', 'contactName', 'totalAmount', 'discount', 'paidAmount',
+                           'lines', 'notes', 'createdAt', 'updatedAt'
                          ]) &&
                          isValidInvoice(incoming(), userId);
         allow update: if isOwner(userId) &&
@@ -184,8 +188,9 @@ service cloud.firestore {
                          incoming().userId == existing().userId &&
                          incoming().createdAt == existing().createdAt &&
                          incoming().diff(existing()).affectedKeys().hasOnly([
-                           'invoiceNumber', 'invoiceType', 'paymentMethod',
-                           'contactId', 'contactName', 'totalAmount', 'lines', 'notes', 'updatedAt'
+                           'invoiceNumber', 'invoiceType', 'invoiceMode', 'paymentMethod',
+                           'contactId', 'contactName', 'totalAmount', 'discount', 'paidAmount',
+                           'lines', 'notes', 'updatedAt'
                          ]);
         allow delete: if isOwner(userId) && isValidId(invoiceId);
       }

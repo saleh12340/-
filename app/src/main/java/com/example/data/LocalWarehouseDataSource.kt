@@ -212,7 +212,9 @@ class LocalWarehouseDataSource internal constructor(
         contactId: String,
         contactName: String,
         draftLines: List<InvoiceDraftLine>,
-        notes: String
+        notes: String,
+        discount: Double,
+        paidAmount: Double?
     ): Result<Invoice> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
@@ -221,28 +223,42 @@ class LocalWarehouseDataSource internal constructor(
                 require(draftLines.all { it.invoiceMode == invoiceMode }) {
                     "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
                 }
+                require(discount.isFinite() && discount >= 0.0) { "قيمة الخصم لا يمكن أن تكون سالبة" }
+                if (paidAmount != null) {
+                    require(paidAmount.isFinite() && paidAmount >= 0.0) { "المبلغ المدفوع غير صالح" }
+                }
                 if (paymentMethod == PaymentMethod.CREDIT) {
                     require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد للفاتورة الآجلة" }
                 }
 
                 val productsMap = productsFlow.value.associateBy { it.id }.toMutableMap()
                 val finalLines = mutableListOf<InvoiceLine>()
-                var grandTotal = 0.0
+                var subtotal = 0.0
 
                 for (draft in draftLines) {
                     require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
                     require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
+                    val cleanDesc = draft.description.trim().take(200)
 
                     // Free sale rows are invoice-only: no inventory lookup, creation or stock deduction.
-                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
-                        val product = draft.draftProduct
-                        val factor = UnitCostEngine.getAvailableUnits(product)
-                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
-                            ?.cumulativeFactor ?: 1.0
+                    if (invoiceType == InvoiceType.SALE && (invoiceMode == InvoiceMode.FREE || draft.draftProduct != null)) {
+                        val cleanName = draft.productName.trim()
+                            .ifEmpty { draft.draftProduct?.name?.trim().orEmpty() }
+                            .take(120)
+                        require(cleanName.isNotEmpty()) { "يرجى إدخال اسم الصنف" }
+                        val cleanUnit = draft.unitName.trim()
+                            .ifEmpty { draft.draftProduct?.defaultUnitName?.takeIf { it.isNotBlank() } ?: "حبة" }
+                            .take(40)
+                        val factor = draft.draftProduct?.let { prod ->
+                            UnitCostEngine.getAvailableUnits(prod)
+                                .firstOrNull { it.name.equals(cleanUnit, ignoreCase = true) }
+                                ?.cumulativeFactor
+                        } ?: 1.0
                         val line = InvoiceLine(
                             productId = "",
-                            productName = product.name,
-                            unitName = draft.unitName,
+                            productName = cleanName,
+                            description = cleanDesc,
+                            unitName = cleanUnit,
                             cumulativeFactor = factor,
                             unitQty = draft.unitQty,
                             unitPrice = draft.unitPrice,
@@ -250,7 +266,7 @@ class LocalWarehouseDataSource internal constructor(
                             lineTotal = draft.unitQty * draft.unitPrice
                         )
                         finalLines.add(line)
-                        grandTotal += line.lineTotal
+                        subtotal += line.lineTotal
                         continue
                     }
 
@@ -268,8 +284,8 @@ class LocalWarehouseDataSource internal constructor(
                             unitQty = draft.unitQty,
                             unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line.copy(productId = productId))
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(productId = productId, description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         productsMap[productId] = currentProd.copy(
                             stockBaseQty = computed.newStockBaseQty,
                             baseCost = computed.updatedBaseCost,
@@ -282,13 +298,23 @@ class LocalWarehouseDataSource internal constructor(
                             unitQty = draft.unitQty,
                             customUnitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         productsMap[productId] = currentProd.copy(
                             stockBaseQty = computed.newStockBaseQty,
                             updatedAt = Timestamp.now()
                         )
                     }
+                }
+
+                require(discount <= subtotal + 0.0001) { "قيمة الخصم تتجاوز إجمالي الفاتورة" }
+                val netTotal = (subtotal - discount).coerceAtLeast(0.0)
+                val resolvedPaid = (paidAmount ?: if (paymentMethod == PaymentMethod.CASH) netTotal else 0.0)
+                    .coerceAtLeast(0.0)
+                require(resolvedPaid <= netTotal + 0.0001) { "المبلغ المدفوع يتجاوز صافي الفاتورة" }
+                val remaining = (netTotal - resolvedPaid).coerceAtLeast(0.0)
+                if (remaining > 0.0001) {
+                    require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد عند وجود مبلغ متبقٍ غير مدفوع" }
                 }
 
                 val now = Timestamp.now()
@@ -313,7 +339,9 @@ class LocalWarehouseDataSource internal constructor(
                     contactName = contactName.trim().ifEmpty {
                         if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
                     }.take(120),
-                    totalAmount = grandTotal,
+                    totalAmount = netTotal,
+                    discount = discount,
+                    paidAmount = resolvedPaid,
                     lines = finalLines,
                     notes = notes.trim().take(300),
                     createdAt = now,
@@ -322,9 +350,11 @@ class LocalWarehouseDataSource internal constructor(
                 )
 
                 productsFlow.value = productsMap.values.toList()
-                if (paymentMethod == PaymentMethod.CREDIT && contactId.isNotBlank()) {
+                if (contactId.isNotBlank() && remaining > 0.0001) {
+                    val cExists = contactsFlow.value.any { it.id == contactId }
+                    if (!cExists) throw IllegalStateException("الحساب المحدد غير موجود")
                     contactsFlow.value = contactsFlow.value.map { c ->
-                        if (c.id == contactId) c.copy(balance = c.balance + grandTotal, updatedAt = now) else c
+                        if (c.id == contactId) c.copy(balance = c.balance + remaining, updatedAt = now) else c
                     }
                 }
                 invoicesFlow.value = listOf(invoice) + invoicesFlow.value
@@ -343,7 +373,9 @@ class LocalWarehouseDataSource internal constructor(
         contactId: String,
         contactName: String,
         draftLines: List<InvoiceDraftLine>,
-        notes: String
+        notes: String,
+        discount: Double,
+        paidAmount: Double?
     ): Result<Invoice> = withContext(Dispatchers.IO) {
         mutex.withLock {
             runCatching {
@@ -352,6 +384,10 @@ class LocalWarehouseDataSource internal constructor(
                 val invoiceMode = draftLines.first().invoiceMode
                 require(draftLines.all { it.invoiceMode == invoiceMode }) {
                     "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
+                }
+                require(discount.isFinite() && discount >= 0.0) { "قيمة الخصم لا يمكن أن تكون سالبة" }
+                if (paidAmount != null) {
+                    require(paidAmount.isFinite() && paidAmount >= 0.0) { "المبلغ المدفوع غير صالح" }
                 }
                 if (paymentMethod == PaymentMethod.CREDIT) {
                     require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد للفاتورة الآجلة" }
@@ -370,8 +406,9 @@ class LocalWarehouseDataSource internal constructor(
                 val now = Timestamp.now()
                 val productsMap = productsFlow.value.associateBy { it.id }.toMutableMap()
 
-                // 1. Reverse stock effect of the old invoice
+                // 1. Reverse stock effect of the old invoice (free sale lines have blank productId)
                 for (oldLine in oldInvoice.lines) {
+                    if (oldLine.productId.isBlank()) continue
                     val existingProd = productsMap[oldLine.productId] ?: continue
                     val restoredQty = if (oldInvoice.resolvedType == InvoiceType.PURCHASE) {
                         (existingProd.stockBaseQty - oldLine.baseQty).coerceAtLeast(0.0)
@@ -383,22 +420,38 @@ class LocalWarehouseDataSource internal constructor(
 
                 // 2. Apply updated lines
                 val finalLines = mutableListOf<InvoiceLine>()
-                var grandTotal = 0.0
+                var subtotal = 0.0
                 for (draft in draftLines) {
                     require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
                     require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
-                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
-                        val product = draft.draftProduct
-                        val factor = UnitCostEngine.getAvailableUnits(product)
-                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
-                            ?.cumulativeFactor ?: 1.0
+                    val cleanDesc = draft.description.trim().take(200)
+
+                    if (invoiceType == InvoiceType.SALE && (invoiceMode == InvoiceMode.FREE || draft.draftProduct != null)) {
+                        val cleanName = draft.productName.trim()
+                            .ifEmpty { draft.draftProduct?.name?.trim().orEmpty() }
+                            .take(120)
+                        require(cleanName.isNotEmpty()) { "يرجى إدخال اسم الصنف" }
+                        val cleanUnit = draft.unitName.trim()
+                            .ifEmpty { draft.draftProduct?.defaultUnitName?.takeIf { it.isNotBlank() } ?: "حبة" }
+                            .take(40)
+                        val factor = draft.draftProduct?.let { prod ->
+                            UnitCostEngine.getAvailableUnits(prod)
+                                .firstOrNull { it.name.equals(cleanUnit, ignoreCase = true) }
+                                ?.cumulativeFactor
+                        } ?: 1.0
                         val line = InvoiceLine(
-                            productId = "", productName = product.name, unitName = draft.unitName,
-                            cumulativeFactor = factor, unitQty = draft.unitQty, unitPrice = draft.unitPrice,
-                            baseQty = draft.unitQty * factor, lineTotal = draft.unitQty * draft.unitPrice
+                            productId = "",
+                            productName = cleanName,
+                            description = cleanDesc,
+                            unitName = cleanUnit,
+                            cumulativeFactor = factor,
+                            unitQty = draft.unitQty,
+                            unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor,
+                            lineTotal = draft.unitQty * draft.unitPrice
                         )
                         finalLines.add(line)
-                        grandTotal += line.lineTotal
+                        subtotal += line.lineTotal
                         continue
                     }
                     var currentProd = productsMap[draft.productId]
@@ -412,8 +465,8 @@ class LocalWarehouseDataSource internal constructor(
                             product = currentProd, unitName = draft.unitName,
                             unitQty = draft.unitQty, unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line.copy(productId = productId))
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(productId = productId, description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         productsMap[productId] = currentProd.copy(
                             stockBaseQty = computed.newStockBaseQty,
                             baseCost = computed.updatedBaseCost, updatedAt = now
@@ -423,24 +476,35 @@ class LocalWarehouseDataSource internal constructor(
                             product = currentProd, unitName = draft.unitName,
                             unitQty = draft.unitQty, customUnitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         productsMap[productId] = currentProd.copy(
                             stockBaseQty = computed.newStockBaseQty, updatedAt = now
                         )
                     }
                 }
 
-                // 3. Reverse old contact credit balance and apply new contact credit balance
+                require(discount <= subtotal + 0.0001) { "قيمة الخصم تتجاوز إجمالي الفاتورة" }
+                val netTotal = (subtotal - discount).coerceAtLeast(0.0)
+                val resolvedPaid = (paidAmount ?: if (paymentMethod == PaymentMethod.CASH) netTotal else 0.0)
+                    .coerceAtLeast(0.0)
+                require(resolvedPaid <= netTotal + 0.0001) { "المبلغ المدفوع يتجاوز صافي الفاتورة" }
+                val remaining = (netTotal - resolvedPaid).coerceAtLeast(0.0)
+                if (remaining > 0.0001) {
+                    require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد عند وجود مبلغ متبقٍ غير مدفوع" }
+                }
+
+                // 3. Reverse old contact unpaid balance and apply new contact unpaid balance
                 val contactsMap = contactsFlow.value.associateBy { it.id }.toMutableMap()
-                if (oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && oldInvoice.contactId.isNotBlank()) {
+                val oldRemaining = oldInvoice.resolvedRemainingAmount
+                if (oldInvoice.contactId.isNotBlank() && oldRemaining > 0.0001) {
                     contactsMap[oldInvoice.contactId]?.let { c ->
-                        contactsMap[c.id] = c.copy(balance = c.balance - oldInvoice.totalAmount, updatedAt = now)
+                        contactsMap[c.id] = c.copy(balance = c.balance - oldRemaining, updatedAt = now)
                     }
                 }
-                if (paymentMethod == PaymentMethod.CREDIT && contactId.isNotBlank()) {
+                if (contactId.isNotBlank() && remaining > 0.0001) {
                     val c = contactsMap[contactId] ?: throw IllegalStateException("الحساب المحدد غير موجود")
-                    contactsMap[c.id] = c.copy(balance = c.balance + grandTotal, updatedAt = now)
+                    contactsMap[c.id] = c.copy(balance = c.balance + remaining, updatedAt = now)
                 }
 
                 val cleanNumber = manualNumber.ifEmpty { oldInvoice.invoiceNumber }
@@ -452,7 +516,9 @@ class LocalWarehouseDataSource internal constructor(
                     contactName = contactName.trim().ifEmpty {
                         if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
                     }.take(120),
-                    totalAmount = grandTotal,
+                    totalAmount = netTotal,
+                    discount = discount,
+                    paidAmount = resolvedPaid,
                     lines = finalLines,
                     notes = notes.trim().take(300),
                     updatedAt = now,
@@ -479,6 +545,7 @@ class LocalWarehouseDataSource internal constructor(
 
                     val productsMap = productsFlow.value.associateBy { it.id }.toMutableMap()
                     for (oldLine in oldInvoice.lines) {
+                        if (oldLine.productId.isBlank()) continue
                         val existingProd = productsMap[oldLine.productId] ?: continue
                         val restoredQty = if (oldInvoice.resolvedType == InvoiceType.PURCHASE) {
                             (existingProd.stockBaseQty - oldLine.baseQty).coerceAtLeast(0.0)
@@ -489,10 +556,11 @@ class LocalWarehouseDataSource internal constructor(
                     }
                     productsFlow.value = productsMap.values.toList()
 
-                    if (oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && oldInvoice.contactId.isNotBlank()) {
+                    val oldRemaining = oldInvoice.resolvedRemainingAmount
+                    if (oldInvoice.contactId.isNotBlank() && oldRemaining > 0.0001) {
                         contactsFlow.value = contactsFlow.value.map { c ->
                             if (c.id == oldInvoice.contactId) {
-                                c.copy(balance = c.balance - oldInvoice.totalAmount, updatedAt = now)
+                                c.copy(balance = c.balance - oldRemaining, updatedAt = now)
                             } else c
                         }
                     }
@@ -763,6 +831,10 @@ object BackupJsonCodec {
                     put("contactId", inv.contactId)
                     put("contactName", inv.contactName)
                     put("totalAmount", inv.totalAmount)
+                    put("discount", inv.discount)
+                    if (inv.paidAmount != null) {
+                        put("paidAmount", inv.paidAmount)
+                    }
                     put("notes", inv.notes)
                     put("createdAtMillis", inv.createdAt?.toDate()?.time ?: System.currentTimeMillis())
                     put("lines", JSONArray().apply {
@@ -770,6 +842,7 @@ object BackupJsonCodec {
                             put(JSONObject().apply {
                                 put("productId", line.productId)
                                 put("productName", line.productName)
+                                put("description", line.description)
                                 put("unitName", line.unitName)
                                 put("cumulativeFactor", line.cumulativeFactor)
                                 put("unitQty", line.unitQty)
@@ -875,6 +948,7 @@ object BackupJsonCodec {
                     InvoiceLine(
                         productId = lObj.optString("productId", ""),
                         productName = lObj.optString("productName", ""),
+                        description = lObj.optString("description", ""),
                         unitName = lObj.optString("unitName", ""),
                         cumulativeFactor = lObj.optDouble("cumulativeFactor", 1.0),
                         unitQty = lObj.optDouble("unitQty", 0.0),
@@ -885,6 +959,7 @@ object BackupJsonCodec {
                 )
             }
             val createdMs = obj.optLong("createdAtMillis", System.currentTimeMillis())
+            val paidVal = if (obj.has("paidAmount") && !obj.isNull("paidAmount")) obj.optDouble("paidAmount") else null
             invoices.add(
                 Invoice(
                     id = obj.optString("id", ""),
@@ -896,6 +971,8 @@ object BackupJsonCodec {
                     contactId = obj.optString("contactId", ""),
                     contactName = obj.optString("contactName", ""),
                     totalAmount = obj.optDouble("totalAmount", 0.0),
+                    discount = obj.optDouble("discount", 0.0),
+                    paidAmount = paidVal?.takeIf { it.isFinite() },
                     lines = lines,
                     notes = obj.optString("notes", ""),
                     createdAt = Timestamp(Date(createdMs)),

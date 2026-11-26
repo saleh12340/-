@@ -390,7 +390,9 @@ class WarehouseRepository(
         contactId: String,
         contactName: String,
         draftLines: List<InvoiceDraftLine>,
-        notes: String
+        notes: String,
+        discount: Double,
+        paidAmount: Double?
     ): Result<Invoice> {
         val basePath = "users/$userId/invoices"
         return try {
@@ -400,6 +402,10 @@ class WarehouseRepository(
             val invoiceMode = draftLines.first().invoiceMode
             require(draftLines.all { it.invoiceMode == invoiceMode }) {
                 "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
+            }
+            require(discount.isFinite() && discount >= 0.0) { "قيمة الخصم لا يمكن أن تكون سالبة" }
+            if (paidAmount != null) {
+                require(paidAmount.isFinite() && paidAmount >= 0.0) { "المبلغ المدفوع غير صالح" }
             }
             if (paymentMethod == PaymentMethod.CREDIT) {
                 require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد للفاتورة الآجلة" }
@@ -424,17 +430,27 @@ class WarehouseRepository(
                 if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
             }.take(120)
 
-            val purchaseDraftProducts = draftLines.mapNotNull { it.draftProduct }.distinctBy { it.id }
+            val allPurchaseDrafts = draftLines.mapNotNull { it.draftProduct }
                 .takeIf { invoiceType == InvoiceType.PURCHASE }.orEmpty()
+            allPurchaseDrafts.groupBy { it.name.trim().lowercase() }.values.forEach { group ->
+                val first = group.first()
+                for (other in group.drop(1)) {
+                    require(first.baseUnitName.equals(other.baseUnitName, ignoreCase = true)) {
+                        "تعارض الوحدة الأساسية للصنف (${first.name}) داخل الفاتورة"
+                    }
+                }
+            }
+            val purchaseDraftProducts = allPurchaseDrafts.distinctBy { it.name.trim().lowercase() }
             val storedProductsForMatch = if (purchaseDraftProducts.isNotEmpty()) {
                 userDoc(uid).collection("products").get().await().documents.mapNotNull { doc ->
                     doc.toObject(Product::class.java)?.copy(id = doc.id)
                 }
             } else emptyList()
             val matchedPurchaseIds = purchaseDraftProducts.mapNotNull { source ->
+                val key = source.name.trim().lowercase()
                 storedProductsForMatch.firstOrNull {
-                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
-                }?.let { source.id to it.id }
+                    it.name.trim().lowercase() == key
+                }?.let { key to it.id }
             }.toMap()
             for (source in purchaseDraftProducts) {
                 val sameName = storedProductsForMatch.firstOrNull {
@@ -459,8 +475,8 @@ class WarehouseRepository(
                 }
             }
             val newPurchaseRefs = purchaseDraftProducts
-                .filter { it.id !in matchedPurchaseIds }
-                .associate { it.id to userDoc(uid).collection("products").document() }
+                .filter { it.name.trim().lowercase() !in matchedPurchaseIds }
+                .associate { it.name.trim().lowercase() to userDoc(uid).collection("products").document() }
 
             val createdInvoice = db.runTransaction { tx ->
                 // Read every existing product and contact before performing any write.
@@ -473,7 +489,7 @@ class WarehouseRepository(
                         ?: throw IllegalStateException("الصنف غير موجود في المخزون")
                     ref to prod
                 }
-                val contactPair = if (paymentMethod == PaymentMethod.CREDIT && contactId.isNotBlank()) {
+                val contactPair = if (contactId.isNotBlank()) {
                     val cRef = userDoc(uid).collection("contacts").document(contactId)
                     val c = tx.get(cRef).toObject(Contact::class.java)
                         ?: throw IllegalStateException("الحساب المحدد غير موجود")
@@ -484,25 +500,40 @@ class WarehouseRepository(
                 val productUpdates = mutableMapOf<String, Pair<Double, Double>>()
                 val productRefs = mutableMapOf<String, com.google.firebase.firestore.DocumentReference>()
                 val originalProducts = mutableMapOf<String, Product>()
-                var grandTotal = 0.0
+                var subtotal = 0.0
 
                 for (draft in draftLines) {
                     require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
                     require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
+                    val cleanDesc = draft.description.trim().take(200)
 
                     // A free sale is a snapshot line stored only in the invoice.
-                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
-                        val source = draft.draftProduct
-                        val factor = UnitCostEngine.getAvailableUnits(source)
-                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
-                            ?.cumulativeFactor ?: 1.0
+                    if (invoiceType == InvoiceType.SALE && (invoiceMode == InvoiceMode.FREE || draft.draftProduct != null)) {
+                        val cleanName = draft.productName.trim()
+                            .ifEmpty { draft.draftProduct?.name?.trim().orEmpty() }
+                            .take(120)
+                        require(cleanName.isNotEmpty()) { "يرجى إدخال اسم الصنف" }
+                        val cleanUnit = draft.unitName.trim()
+                            .ifEmpty { draft.draftProduct?.defaultUnitName?.takeIf { it.isNotBlank() } ?: "حبة" }
+                            .take(40)
+                        val factor = draft.draftProduct?.let { source ->
+                            UnitCostEngine.getAvailableUnits(source)
+                                .firstOrNull { it.name.equals(cleanUnit, ignoreCase = true) }
+                                ?.cumulativeFactor
+                        } ?: 1.0
                         val line = InvoiceLine(
-                            productId = "", productName = source.name, unitName = draft.unitName,
-                            cumulativeFactor = factor, unitQty = draft.unitQty, unitPrice = draft.unitPrice,
-                            baseQty = draft.unitQty * factor, lineTotal = draft.unitQty * draft.unitPrice
+                            productId = "",
+                            productName = cleanName,
+                            description = cleanDesc,
+                            unitName = cleanUnit,
+                            cumulativeFactor = factor,
+                            unitQty = draft.unitQty,
+                            unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor,
+                            lineTotal = draft.unitQty * draft.unitPrice
                         )
                         finalLines.add(line)
-                        grandTotal += line.lineTotal
+                        subtotal += line.lineTotal
                         continue
                     }
 
@@ -510,7 +541,8 @@ class WarehouseRepository(
                     val productId: String
                     if (invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
                         val source = draft.draftProduct
-                        val matchedId = matchedPurchaseIds[source.id]
+                        val nameKey = source.name.trim().lowercase()
+                        val matchedId = matchedPurchaseIds[nameKey]
                         if (matchedId != null) {
                             productId = matchedId
                             val pair = productSnapshots[productId]
@@ -519,7 +551,7 @@ class WarehouseRepository(
                             originalProducts[productId] = pair.second
                             currentProd = pair.second
                         } else {
-                            val ref = newPurchaseRefs[source.id]
+                            val ref = newPurchaseRefs[nameKey]
                                 ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
                             productId = ref.id
                             productRefs[productId] = ref
@@ -545,23 +577,34 @@ class WarehouseRepository(
                             product = effectiveProd, unitName = draft.unitName,
                             unitQty = draft.unitQty, unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line.copy(productId = productId))
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(productId = productId, description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         productUpdates[productId] = computed.newStockBaseQty to computed.updatedBaseCost
                     } else {
                         val computed = UnitCostEngine.computeSaleLine(
                             product = effectiveProd, unitName = draft.unitName,
                             unitQty = draft.unitQty, customUnitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         productUpdates[productId] = computed.newStockBaseQty to effectiveProd.baseCost
                     }
+                }
+
+                require(discount <= subtotal + 0.0001) { "قيمة الخصم تتجاوز إجمالي الفاتورة" }
+                val netTotal = (subtotal - discount).coerceAtLeast(0.0)
+                val resolvedPaid = (paidAmount ?: if (paymentMethod == PaymentMethod.CASH) netTotal else 0.0)
+                    .coerceAtLeast(0.0)
+                require(resolvedPaid <= netTotal + 0.0001) { "المبلغ المدفوع يتجاوز صافي الفاتورة" }
+                val remaining = (netTotal - resolvedPaid).coerceAtLeast(0.0)
+                if (remaining > 0.0001) {
+                    require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد عند وجود مبلغ متبقٍ غير مدفوع" }
                 }
 
                 val serializedLines = finalLines.map { line ->
                     mapOf(
                         "productId" to line.productId, "productName" to line.productName,
+                        "description" to line.description,
                         "unitName" to line.unitName, "cumulativeFactor" to line.cumulativeFactor,
                         "unitQty" to line.unitQty, "unitPrice" to line.unitPrice,
                         "baseQty" to line.baseQty, "lineTotal" to line.lineTotal
@@ -572,19 +615,26 @@ class WarehouseRepository(
                     "invoiceType" to invoiceType.name, "invoiceMode" to invoiceMode.name,
                     "paymentMethod" to paymentMethod.name,
                     "contactId" to contactId.trim(), "contactName" to resolvedContactName,
-                    "totalAmount" to grandTotal, "lines" to serializedLines,
+                    "totalAmount" to netTotal,
+                    "discount" to discount,
+                    "paidAmount" to resolvedPaid,
+                    "lines" to serializedLines,
                     "notes" to notes.trim().take(300),
                     "createdAt" to FieldValue.serverTimestamp(), "updatedAt" to FieldValue.serverTimestamp()
                 ))
 
+                val newProductIds = newPurchaseRefs.values.map { it.id }.toSet()
                 for ((pid, tuple) in productUpdates) {
                     val ref = productRefs.getValue(pid)
                     val original = originalProducts.getValue(pid)
-                    if (pid in newPurchaseRefs.values.map { it.id }) {
+                    if (pid in newProductIds) {
+                        val serializedTiers = original.unitTiers.map {
+                            mapOf("name" to it.name.trim(), "factorToPrevious" to it.factorToPrevious)
+                        }
                         tx.set(ref, mapOf(
                             "userId" to uid, "name" to original.name.trim(), "barcode" to original.barcode.trim(),
                             "baseUnitName" to original.baseUnitName, "defaultUnitName" to original.defaultUnitName,
-                            "unitTiers" to original.unitTiers, "baseCost" to tuple.second,
+                            "unitTiers" to serializedTiers, "baseCost" to tuple.second,
                             "baseSellPrice" to original.baseSellPrice, "stockBaseQty" to tuple.first,
                             "trackExpiry" to original.trackExpiry, "expiryDate" to original.expiryDate,
                             "minStockAlert" to original.minStockAlert,
@@ -600,10 +650,10 @@ class WarehouseRepository(
                         tx.update(ref, updates)
                     }
                 }
-                if (contactPair != null) {
+                if (contactPair != null && remaining > 0.0001) {
                     val (cRef, contact) = contactPair
                     tx.update(cRef, mapOf(
-                        "balance" to (contact.balance + grandTotal),
+                        "balance" to (contact.balance + remaining),
                         "updatedAt" to FieldValue.serverTimestamp()
                     ))
                 }
@@ -612,7 +662,8 @@ class WarehouseRepository(
                     invoiceType = invoiceType.name, paymentMethod = paymentMethod.name,
                     invoiceMode = invoiceMode.name,
                     contactId = contactId.trim(), contactName = resolvedContactName,
-                    totalAmount = grandTotal, lines = finalLines, notes = notes.trim().take(300)
+                    totalAmount = netTotal, discount = discount, paidAmount = resolvedPaid,
+                    lines = finalLines, notes = notes.trim().take(300)
                 )
             }.await()
 
@@ -634,7 +685,9 @@ class WarehouseRepository(
         contactId: String,
         contactName: String,
         draftLines: List<InvoiceDraftLine>,
-        notes: String
+        notes: String,
+        discount: Double,
+        paidAmount: Double?
     ): Result<Invoice> {
         val docPath = "users/$userId/invoices/$invoiceId"
         return try {
@@ -642,10 +695,14 @@ class WarehouseRepository(
             check(uid == userId) { "تعارض هوية المستخدم" }
             require(invoiceId.isNotBlank()) { "معرف الفاتورة غير صالح" }
             require(draftLines.isNotEmpty() && draftLines.size <= 50) { "يجب إضافة صنف واحد على الأقل للفاتورة" }
-                val invoiceMode = draftLines.first().invoiceMode
-                require(draftLines.all { it.invoiceMode == invoiceMode }) {
-                    "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
-                }
+            val invoiceMode = draftLines.first().invoiceMode
+            require(draftLines.all { it.invoiceMode == invoiceMode }) {
+                "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
+            }
+            require(discount.isFinite() && discount >= 0.0) { "قيمة الخصم لا يمكن أن تكون سالبة" }
+            if (paidAmount != null) {
+                require(paidAmount.isFinite() && paidAmount >= 0.0) { "المبلغ المدفوع غير صالح" }
+            }
             if (paymentMethod == PaymentMethod.CREDIT) {
                 require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد للفاتورة الآجلة" }
             }
@@ -665,17 +722,27 @@ class WarehouseRepository(
                 if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
             }.take(120)
 
-            val purchaseDraftProducts = draftLines.mapNotNull { it.draftProduct }.distinctBy { it.id }
+            val allPurchaseDrafts = draftLines.mapNotNull { it.draftProduct }
                 .takeIf { invoiceType == InvoiceType.PURCHASE }.orEmpty()
+            allPurchaseDrafts.groupBy { it.name.trim().lowercase() }.values.forEach { group ->
+                val first = group.first()
+                for (other in group.drop(1)) {
+                    require(first.baseUnitName.equals(other.baseUnitName, ignoreCase = true)) {
+                        "تعارض الوحدة الأساسية للصنف (${first.name}) داخل الفاتورة"
+                    }
+                }
+            }
+            val purchaseDraftProducts = allPurchaseDrafts.distinctBy { it.name.trim().lowercase() }
             val storedProductsForMatch = if (purchaseDraftProducts.isNotEmpty()) {
                 userDoc(uid).collection("products").get().await().documents.mapNotNull { doc ->
                     doc.toObject(Product::class.java)?.copy(id = doc.id)
                 }
             } else emptyList()
             val matchedPurchaseIds = purchaseDraftProducts.mapNotNull { source ->
+                val key = source.name.trim().lowercase()
                 storedProductsForMatch.firstOrNull {
-                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
-                }?.let { source.id to it.id }
+                    it.name.trim().lowercase() == key
+                }?.let { key to it.id }
             }.toMap()
             for (source in purchaseDraftProducts) {
                 val sameName = storedProductsForMatch.firstOrNull {
@@ -700,8 +767,8 @@ class WarehouseRepository(
                 }
             }
             val newPurchaseRefs = purchaseDraftProducts
-                .filter { it.id !in matchedPurchaseIds }
-                .associate { it.id to userDoc(uid).collection("products").document() }
+                .filter { it.name.trim().lowercase() !in matchedPurchaseIds }
+                .associate { it.name.trim().lowercase() to userDoc(uid).collection("products").document() }
 
             val updatedInvoice = db.runTransaction { tx ->
                 // 1. Read old invoice first
@@ -730,8 +797,8 @@ class WarehouseRepository(
                 }
 
                 val contactIdsToRead = listOfNotNull(
-                    oldInvoice.contactId.takeIf { oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && it.isNotBlank() },
-                    contactId.takeIf { paymentMethod == PaymentMethod.CREDIT && it.isNotBlank() }
+                    oldInvoice.contactId.takeIf { it.isNotBlank() && oldInvoice.resolvedRemainingAmount > 0.0001 },
+                    contactId.takeIf { it.isNotBlank() }
                 ).distinct()
                 val contactRefs = mutableMapOf<String, com.google.firebase.firestore.DocumentReference>()
                 val workingBalances = mutableMapOf<String, Double>()
@@ -750,6 +817,7 @@ class WarehouseRepository(
 
                 // Reverse only inventory-backed lines. Free sale rows have an empty productId.
                 for (oldLine in oldInvoice.lines) {
+                    if (oldLine.productId.isBlank()) continue
                     val cur = workingProducts[oldLine.productId] ?: continue
                     val restoredQty = if (oldInvoice.resolvedType == InvoiceType.PURCHASE) {
                         (cur.stockBaseQty - oldLine.baseQty).coerceAtLeast(0.0)
@@ -759,22 +827,38 @@ class WarehouseRepository(
 
                 // Apply new lines; free sale rows remain invoice-only.
                 val finalLines = mutableListOf<InvoiceLine>()
-                var grandTotal = 0.0
+                var subtotal = 0.0
                 for (draft in draftLines) {
                     require(draft.unitQty.isFinite() && draft.unitQty > 0.0) { "كمية الصنف غير صالحة" }
                     require(draft.unitPrice.isFinite() && draft.unitPrice >= 0.0) { "سعر الصنف غير صالح" }
-                    if (invoiceType == InvoiceType.SALE && draft.draftProduct != null) {
-                        val source = draft.draftProduct
-                        val factor = UnitCostEngine.getAvailableUnits(source)
-                            .firstOrNull { it.name.equals(draft.unitName, ignoreCase = true) }
-                            ?.cumulativeFactor ?: 1.0
+                    val cleanDesc = draft.description.trim().take(200)
+
+                    if (invoiceType == InvoiceType.SALE && (invoiceMode == InvoiceMode.FREE || draft.draftProduct != null)) {
+                        val cleanName = draft.productName.trim()
+                            .ifEmpty { draft.draftProduct?.name?.trim().orEmpty() }
+                            .take(120)
+                        require(cleanName.isNotEmpty()) { "يرجى إدخال اسم الصنف" }
+                        val cleanUnit = draft.unitName.trim()
+                            .ifEmpty { draft.draftProduct?.defaultUnitName?.takeIf { it.isNotBlank() } ?: "حبة" }
+                            .take(40)
+                        val factor = draft.draftProduct?.let { source ->
+                            UnitCostEngine.getAvailableUnits(source)
+                                .firstOrNull { it.name.equals(cleanUnit, ignoreCase = true) }
+                                ?.cumulativeFactor
+                        } ?: 1.0
                         val line = InvoiceLine(
-                            productId = "", productName = source.name, unitName = draft.unitName,
-                            cumulativeFactor = factor, unitQty = draft.unitQty, unitPrice = draft.unitPrice,
-                            baseQty = draft.unitQty * factor, lineTotal = draft.unitQty * draft.unitPrice
+                            productId = "",
+                            productName = cleanName,
+                            description = cleanDesc,
+                            unitName = cleanUnit,
+                            cumulativeFactor = factor,
+                            unitQty = draft.unitQty,
+                            unitPrice = draft.unitPrice,
+                            baseQty = draft.unitQty * factor,
+                            lineTotal = draft.unitQty * draft.unitPrice
                         )
                         finalLines.add(line)
-                        grandTotal += line.lineTotal
+                        subtotal += line.lineTotal
                         continue
                     }
 
@@ -782,13 +866,14 @@ class WarehouseRepository(
                     val productId: String
                     if (invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
                         val source = draft.draftProduct
-                        val matchedId = matchedPurchaseIds[source.id]
+                        val nameKey = source.name.trim().lowercase()
+                        val matchedId = matchedPurchaseIds[nameKey]
                         if (matchedId != null) {
                             productId = matchedId
                             currentProd = workingProducts[productId]
                                 ?: throw IllegalStateException("الصنف المسجل غير متاح")
                         } else {
-                            val ref = newPurchaseRefs[source.id]
+                            val ref = newPurchaseRefs[nameKey]
                                 ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
                             productId = ref.id
                             productRefs[productId] = ref
@@ -810,8 +895,8 @@ class WarehouseRepository(
                             product = effectiveProd, unitName = draft.unitName,
                             unitQty = draft.unitQty, unitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line.copy(productId = productId))
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(productId = productId, description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         workingProducts[productId] = effectiveProd.copy(
                             stockBaseQty = computed.newStockBaseQty, baseCost = computed.updatedBaseCost
                         )
@@ -820,22 +905,33 @@ class WarehouseRepository(
                             product = effectiveProd, unitName = draft.unitName,
                             unitQty = draft.unitQty, customUnitPrice = draft.unitPrice
                         ).getOrThrow()
-                        finalLines.add(computed.line)
-                        grandTotal += computed.line.lineTotal
+                        finalLines.add(computed.line.copy(description = cleanDesc))
+                        subtotal += computed.line.lineTotal
                         workingProducts[productId] = effectiveProd.copy(stockBaseQty = computed.newStockBaseQty)
                     }
                 }
 
+                require(discount <= subtotal + 0.0001) { "قيمة الخصم تتجاوز إجمالي الفاتورة" }
+                val netTotal = (subtotal - discount).coerceAtLeast(0.0)
+                val resolvedPaid = (paidAmount ?: if (paymentMethod == PaymentMethod.CASH) netTotal else 0.0)
+                    .coerceAtLeast(0.0)
+                require(resolvedPaid <= netTotal + 0.0001) { "المبلغ المدفوع يتجاوز صافي الفاتورة" }
+                val remaining = (netTotal - resolvedPaid).coerceAtLeast(0.0)
+                if (remaining > 0.0001) {
+                    require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد عند وجود مبلغ متبقٍ غير مدفوع" }
+                }
+
                 // 5. Compute updated contact balances
-                if (oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && oldInvoice.contactId.isNotBlank()) {
+                val oldRemaining = oldInvoice.resolvedRemainingAmount
+                if (oldInvoice.contactId.isNotBlank() && oldRemaining > 0.0001) {
                     workingBalances[oldInvoice.contactId]?.let { prev ->
-                        workingBalances[oldInvoice.contactId] = prev - oldInvoice.totalAmount
+                        workingBalances[oldInvoice.contactId] = prev - oldRemaining
                     }
                 }
-                if (paymentMethod == PaymentMethod.CREDIT && contactId.isNotBlank()) {
+                if (contactId.isNotBlank() && remaining > 0.0001) {
                     val curBal = workingBalances[contactId]
                         ?: throw IllegalStateException("الحساب المحدد غير موجود")
-                    workingBalances[contactId] = curBal + grandTotal
+                    workingBalances[contactId] = curBal + remaining
                 }
 
                 val cleanNumber = manualNumber.ifEmpty { oldInvoice.invoiceNumber }.take(40)
@@ -843,6 +939,7 @@ class WarehouseRepository(
                     mapOf(
                         "productId" to line.productId,
                         "productName" to line.productName,
+                        "description" to line.description,
                         "unitName" to line.unitName,
                         "cumulativeFactor" to line.cumulativeFactor,
                         "unitQty" to line.unitQty,
@@ -862,21 +959,27 @@ class WarehouseRepository(
                         "paymentMethod" to paymentMethod.name,
                         "contactId" to contactId.trim(),
                         "contactName" to resolvedContactName,
-                        "totalAmount" to grandTotal,
+                        "totalAmount" to netTotal,
+                        "discount" to discount,
+                        "paidAmount" to resolvedPaid,
                         "lines" to serializedLines,
                         "notes" to notes.trim().take(300),
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 )
 
+                val newProductIds = newPurchaseRefs.values.map { it.id }.toSet()
                 for ((pid, updatedProd) in workingProducts) {
                     val orig = origProducts.getValue(pid)
-                    val isNewPurchaseProduct = newPurchaseRefs.values.any { it.id == pid }
+                    val isNewPurchaseProduct = pid in newProductIds
                     if (isNewPurchaseProduct) {
+                        val serializedTiers = updatedProd.unitTiers.map {
+                            mapOf("name" to it.name.trim(), "factorToPrevious" to it.factorToPrevious)
+                        }
                         tx.set(productRefs.getValue(pid), mapOf(
                             "userId" to uid, "name" to updatedProd.name.trim(), "barcode" to updatedProd.barcode.trim(),
                             "baseUnitName" to updatedProd.baseUnitName, "defaultUnitName" to updatedProd.defaultUnitName,
-                            "unitTiers" to updatedProd.unitTiers, "baseCost" to updatedProd.baseCost,
+                            "unitTiers" to serializedTiers, "baseCost" to updatedProd.baseCost,
                             "baseSellPrice" to updatedProd.baseSellPrice, "stockBaseQty" to updatedProd.stockBaseQty,
                             "trackExpiry" to updatedProd.trackExpiry, "expiryDate" to updatedProd.expiryDate,
                             "minStockAlert" to updatedProd.minStockAlert,
@@ -909,7 +1012,9 @@ class WarehouseRepository(
                     invoiceMode = invoiceMode.name,
                     contactId = contactId.trim(),
                     contactName = resolvedContactName,
-                    totalAmount = grandTotal,
+                    totalAmount = netTotal,
+                    discount = discount,
+                    paidAmount = resolvedPaid,
                     lines = finalLines,
                     notes = notes.trim().take(300)
                 )
@@ -949,13 +1054,15 @@ class WarehouseRepository(
                     }
                 }
 
-                val contactPair = if (oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && oldInvoice.contactId.isNotBlank()) {
+                val oldRemaining = oldInvoice.resolvedRemainingAmount
+                val contactPair = if (oldInvoice.contactId.isNotBlank() && oldRemaining > 0.0001) {
                     val cRef = userDoc(uid).collection("contacts").document(oldInvoice.contactId)
                     val contact = tx.get(cRef).toObject(Contact::class.java)
                     contact?.let { cRef to it }
                 } else null
 
                 for (line in oldInvoice.lines) {
+                    if (line.productId.isBlank()) continue
                     val curStock = workingStocks[line.productId] ?: continue
                     workingStocks[line.productId] = if (oldInvoice.resolvedType == InvoiceType.PURCHASE) {
                         (curStock - line.baseQty).coerceAtLeast(0.0)
@@ -979,7 +1086,7 @@ class WarehouseRepository(
                     tx.update(
                         cRef,
                         mapOf(
-                            "balance" to (contact.balance - oldInvoice.totalAmount),
+                            "balance" to (contact.balance - oldRemaining),
                             "updatedAt" to FieldValue.serverTimestamp()
                         )
                     )
@@ -1261,19 +1368,29 @@ class WarehouseRepository(
             val seenInvoiceNumbers = existingInvoices.map { it.invoiceNumber.trim() }.toMutableSet()
             for (inv in bundle.invoices) {
                 if (inv.invoiceNumber.isBlank() || inv.lines.isEmpty() || inv.invoiceNumber.trim() in seenInvoiceNumbers) continue
+                val mode = inv.resolvedMode
                 userDoc(uid).collection("invoices").document().set(
                     mapOf(
                         "userId" to uid,
                         "invoiceNumber" to inv.invoiceNumber.trim().take(40),
                         "invoiceType" to inv.resolvedType.name,
+                        "invoiceMode" to mode.name,
                         "paymentMethod" to inv.resolvedPaymentMethod.name,
                         "contactId" to inv.contactId.take(128),
                         "contactName" to inv.contactName.take(120),
                         "totalAmount" to inv.totalAmount.coerceAtLeast(0.0),
+                        "discount" to inv.discount.coerceAtLeast(0.0),
+                        "paidAmount" to inv.resolvedPaidAmount.coerceAtLeast(0.0),
                         "lines" to inv.lines.map { line ->
+                            val resolvedLineId = if (mode == InvoiceMode.FREE && inv.resolvedType == InvoiceType.SALE) {
+                                ""
+                            } else {
+                                line.productId.ifBlank { "restored_item" }
+                            }
                             mapOf(
-                                "productId" to line.productId.ifBlank { "restored_item" },
+                                "productId" to resolvedLineId,
                                 "productName" to line.productName.ifBlank { "صنف" }.take(120),
+                                "description" to line.description.take(200),
                                 "unitName" to line.unitName.ifBlank { "حبة" }.take(40),
                                 "cumulativeFactor" to line.cumulativeFactor.coerceAtLeast(0.0001),
                                 "unitQty" to line.unitQty.coerceAtLeast(0.0001),
