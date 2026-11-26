@@ -419,15 +419,41 @@ class WarehouseRepository(
                 if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
             }.take(120)
 
-            val newPurchaseRefs = draftLines
-                .filter { invoiceType == InvoiceType.PURCHASE && it.draftProduct != null }
-                .associate { it.draftProduct!!.id to userDoc(uid).collection("products").document() }
+            val purchaseDraftProducts = draftLines.mapNotNull { it.draftProduct }.distinctBy { it.id }
+                .takeIf { invoiceType == InvoiceType.PURCHASE }.orEmpty()
+            val storedProductsForMatch = if (purchaseDraftProducts.isNotEmpty()) {
+                userDoc(uid).collection("products").get().await().documents.mapNotNull { doc ->
+                    doc.toObject(Product::class.java)?.copy(id = doc.id)
+                }
+            } else emptyList()
+            val matchedPurchaseIds = purchaseDraftProducts.mapNotNull { source ->
+                storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }?.let { source.id to it.id }
+            }.toMap()
+            for (source in purchaseDraftProducts) {
+                val sameName = storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }
+                if (sameName != null) {
+                    require(sameName.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
+                        "الصنف موجود في المخزن بوحدة أساسية مختلفة؛ اختر الصنف المسجل"
+                    }
+                } else if (source.barcode.isNotBlank()) {
+                    require(storedProductsForMatch.none {
+                        it.barcode.trim().equals(source.barcode.trim(), ignoreCase = true)
+                    }) { "الباركود مسجل لصنف آخر" }
+                }
+            }
+            val newPurchaseRefs = purchaseDraftProducts
+                .filter { it.id !in matchedPurchaseIds }
+                .associate { it.id to userDoc(uid).collection("products").document() }
 
             val createdInvoice = db.runTransaction { tx ->
                 // Read every existing product and contact before performing any write.
-                val existingIds = draftLines
+                val existingIds = (draftLines
                     .filter { it.draftProduct == null && it.productId.isNotBlank() }
-                    .map { it.productId }.distinct()
+                    .map { it.productId } + matchedPurchaseIds.values).distinct()
                 val productSnapshots = existingIds.associateWith { pid ->
                     val ref = userDoc(uid).collection("products").document(pid)
                     val prod = tx.get(ref).toObject(Product::class.java)
@@ -471,14 +497,23 @@ class WarehouseRepository(
                     val productId: String
                     if (invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
                         val source = draft.draftProduct
-                        val ref = newPurchaseRefs[source.id]
-                            ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
-                        productId = ref.id
-                        productRefs[productId] = ref
-                        val base = originalProducts.getOrPut(productId) {
-                            source.copy(id = productId, userId = uid, stockBaseQty = 0.0)
+                        val matchedId = matchedPurchaseIds[source.id]
+                        if (matchedId != null) {
+                            productId = matchedId
+                            val pair = productSnapshots[productId]
+                                ?: throw IllegalStateException("الصنف المسجل غير متاح")
+                            productRefs[productId] = pair.first
+                            originalProducts[productId] = pair.second
+                            currentProd = pair.second
+                        } else {
+                            val ref = newPurchaseRefs[source.id]
+                                ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
+                            productId = ref.id
+                            productRefs[productId] = ref
+                            currentProd = originalProducts.getOrPut(productId) {
+                                source.copy(id = productId, userId = uid, stockBaseQty = 0.0)
+                            }
                         }
-                        currentProd = base
                     } else {
                         productId = draft.productId
                         val pair = productSnapshots[productId]
@@ -611,9 +646,35 @@ class WarehouseRepository(
                 if (invoiceType == InvoiceType.PURCHASE) "مورد نقدي" else "عميل نقدي"
             }.take(120)
 
-            val newPurchaseRefs = draftLines
-                .filter { invoiceType == InvoiceType.PURCHASE && it.draftProduct != null }
-                .associate { it.draftProduct!!.id to userDoc(uid).collection("products").document() }
+            val purchaseDraftProducts = draftLines.mapNotNull { it.draftProduct }.distinctBy { it.id }
+                .takeIf { invoiceType == InvoiceType.PURCHASE }.orEmpty()
+            val storedProductsForMatch = if (purchaseDraftProducts.isNotEmpty()) {
+                userDoc(uid).collection("products").get().await().documents.mapNotNull { doc ->
+                    doc.toObject(Product::class.java)?.copy(id = doc.id)
+                }
+            } else emptyList()
+            val matchedPurchaseIds = purchaseDraftProducts.mapNotNull { source ->
+                storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }?.let { source.id to it.id }
+            }.toMap()
+            for (source in purchaseDraftProducts) {
+                val sameName = storedProductsForMatch.firstOrNull {
+                    it.name.trim().equals(source.name.trim(), ignoreCase = true)
+                }
+                if (sameName != null) {
+                    require(sameName.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
+                        "الصنف موجود في المخزن بوحدة أساسية مختلفة؛ اختر الصنف المسجل"
+                    }
+                } else if (source.barcode.isNotBlank()) {
+                    require(storedProductsForMatch.none {
+                        it.barcode.trim().equals(source.barcode.trim(), ignoreCase = true)
+                    }) { "الباركود مسجل لصنف آخر" }
+                }
+            }
+            val newPurchaseRefs = purchaseDraftProducts
+                .filter { it.id !in matchedPurchaseIds }
+                .associate { it.id to userDoc(uid).collection("products").document() }
 
             val updatedInvoice = db.runTransaction { tx ->
                 // 1. Read old invoice first
@@ -623,7 +684,8 @@ class WarehouseRepository(
 
                 // Read old and existing products first; transient purchase items need no read.
                 val allProductIds = (oldInvoice.lines.map { it.productId } +
-                    draftLines.filter { it.draftProduct == null }.map { it.productId })
+                    draftLines.filter { it.draftProduct == null }.map { it.productId } +
+                    matchedPurchaseIds.values)
                     .filter { it.isNotBlank() }.distinct()
                 val productRefs = mutableMapOf<String, com.google.firebase.firestore.DocumentReference>()
                 val origProducts = mutableMapOf<String, Product>()
@@ -693,15 +755,22 @@ class WarehouseRepository(
                     val productId: String
                     if (invoiceType == InvoiceType.PURCHASE && draft.draftProduct != null) {
                         val source = draft.draftProduct
-                        val ref = newPurchaseRefs[source.id]
-                            ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
-                        productId = ref.id
-                        productRefs[productId] = ref
-                        val base = origProducts.getOrPut(productId) {
-                            source.copy(id = productId, userId = uid, stockBaseQty = 0.0)
-                        }
-                        currentProd = workingProducts[productId] ?: base.also {
-                            workingProducts[productId] = it
+                        val matchedId = matchedPurchaseIds[source.id]
+                        if (matchedId != null) {
+                            productId = matchedId
+                            currentProd = workingProducts[productId]
+                                ?: throw IllegalStateException("الصنف المسجل غير متاح")
+                        } else {
+                            val ref = newPurchaseRefs[source.id]
+                                ?: throw IllegalStateException("تعذر تجهيز الصنف الجديد للشراء")
+                            productId = ref.id
+                            productRefs[productId] = ref
+                            val base = origProducts.getOrPut(productId) {
+                                source.copy(id = productId, userId = uid, stockBaseQty = 0.0)
+                            }
+                            currentProd = workingProducts[productId] ?: base.also {
+                                workingProducts[productId] = it
+                            }
                         }
                     } else {
                         productId = draft.productId
