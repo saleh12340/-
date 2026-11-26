@@ -6,6 +6,7 @@ import com.example.domain.ContactType
 import com.example.domain.Invoice
 import com.example.domain.InvoiceLine
 import com.example.domain.InvoiceType
+import com.example.domain.InvoiceMode
 import com.example.domain.Payment
 import com.example.domain.PaymentMethod
 import com.example.domain.Product
@@ -216,6 +217,10 @@ class LocalWarehouseDataSource internal constructor(
         mutex.withLock {
             runCatching {
                 require(draftLines.isNotEmpty() && draftLines.size <= 50) { "يجب إضافة صنف واحد على الأقل للفاتورة" }
+                val invoiceMode = draftLines.first().invoiceMode
+                require(draftLines.all { it.invoiceMode == invoiceMode }) {
+                    "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
+                }
                 if (paymentMethod == PaymentMethod.CREDIT) {
                     require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد للفاتورة الآجلة" }
                 }
@@ -312,7 +317,8 @@ class LocalWarehouseDataSource internal constructor(
                     lines = finalLines,
                     notes = notes.trim().take(300),
                     createdAt = now,
-                    updatedAt = now
+                    updatedAt = now,
+                    invoiceMode = invoiceMode.name
                 )
 
                 productsFlow.value = productsMap.values.toList()
@@ -445,7 +451,8 @@ class LocalWarehouseDataSource internal constructor(
                     totalAmount = grandTotal,
                     lines = finalLines,
                     notes = notes.trim().take(300),
-                    updatedAt = now
+                    updatedAt = now,
+                    invoiceMode = invoiceMode.name
                 )
 
                 productsFlow.value = productsMap.values.toList()
@@ -747,6 +754,7 @@ object BackupJsonCodec {
                     put("userId", inv.userId)
                     put("invoiceNumber", inv.invoiceNumber)
                     put("invoiceType", inv.invoiceType)
+                    put("invoiceMode", inv.invoiceMode)
                     put("paymentMethod", inv.paymentMethod)
                     put("contactId", inv.contactId)
                     put("contactName", inv.contactName)
@@ -879,6 +887,7 @@ object BackupJsonCodec {
                     userId = obj.optString("userId", ""),
                     invoiceNumber = obj.optString("invoiceNumber", ""),
                     invoiceType = obj.optString("invoiceType", InvoiceType.SALE.name),
+                    invoiceMode = obj.optString("invoiceMode", InvoiceMode.STOCK.name),
                     paymentMethod = obj.optString("paymentMethod", PaymentMethod.CASH.name),
                     contactId = obj.optString("contactId", ""),
                     contactName = obj.optString("contactName", ""),
