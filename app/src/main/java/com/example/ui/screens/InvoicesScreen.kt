@@ -38,6 +38,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
+import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.AddShoppingCart
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
@@ -84,6 +85,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import kotlinx.coroutines.launch
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -230,6 +233,13 @@ fun InvoicesScreen(
     var draftTotalInput by remember { mutableStateOf("") }
     var isProductInputFocused by remember { mutableStateOf(false) }
     var unitPickerLineKey by remember { mutableStateOf<String?>(null) }
+
+    val activeTotalFocusRequester = remember { FocusRequester() }
+    val activeQtyFocusRequester = remember { FocusRequester() }
+    val activeNameFocusRequester = remember { FocusRequester() }
+    val hasActiveRowInput = draftSearchQuery.isNotBlank() ||
+        draftQtyInput.isNotBlank() ||
+        draftTotalInput.isNotBlank()
 
     var showCustomerDialog by remember { mutableStateOf(false) }
     var showInvoiceNumDialog by remember { mutableStateOf(false) }
@@ -388,32 +398,42 @@ fun InvoicesScreen(
         }
     }
 
-    fun addProductFromSuggestion(prod: Product, unitName: String, factor: Double) {
+    fun addProductFromSuggestion(
+        prod: Product,
+        unitName: String,
+        factor: Double,
+        targetFocusAfterAdd: FocusRequester? = null
+    ): Boolean {
         if (invoiceMode == InvoiceMode.FREE) {
             localError = "الفاتورة الحرة تقبل الأصناف اليدوية فقط؛ استخدم خيار إضافة صنف حر"
-            return
+            return false
         }
         val dupLine = draftLines.any {
             it.product.id == prod.id && it.unitName.equals(unitName, ignoreCase = true)
         }
         if (dupLine) {
             localError = "تمت إضافة (${prod.name}) بوحدة ($unitName) مسبقًا، لا يُسمح بالتكرار"
-            return
+            return false
         }
-        val q = NumberFormatUtils.parseDecimal(draftQtyInput)?.takeIf { it > 0.0 } ?: 1.0
+        val parsedQty = NumberFormatUtils.parseDecimal(draftQtyInput)
+        if (draftQtyInput.isNotBlank() && (parsedQty == null || !parsedQty.isFinite() || parsedQty <= 0.0)) {
+            localError = "يرجى إدخال كمية أكبر من صفر في السطر الحالي"
+            return false
+        }
+        val q = parsedQty?.takeIf { it > 0.0 } ?: 1.0
         val defaultPrice = if (invoiceType == InvoiceType.PURCHASE) {
             UnitCostEngine.calculateLargeUnitCostFromBase(prod.baseCost, factor)
         } else {
             UnitCostEngine.calculateUnitSellPrice(prod.baseSellPrice, factor)
         }
-        val preTotal = NumberFormatUtils.parseDecimal(draftTotalInput)?.takeIf { it > 0.0 }
+        val preTotal = NumberFormatUtils.parseDecimal(draftTotalInput)?.takeIf { it >= 0.0 }
         val effectiveUnitPrice = if (preTotal != null) preTotal / q else defaultPrice
 
         val available = effectiveAvailableStock(prod)
         val alreadyInDraft = draftLines.filter { it.product.id == prod.id }.sumOf { it.baseQty }
         if (invoiceType == InvoiceType.SALE && (alreadyInDraft + q * factor) - available > 0.0001) {
             localError = "الكمية المطلوبة من (${prod.name}) تتجاوز المتاح بالمخزون (${NumberFormatUtils.formatNumber(available)} ${prod.baseUnitName})"
-            return
+            return false
         }
 
         lineKeyCounter++
@@ -434,59 +454,194 @@ fun InvoicesScreen(
         draftSearchQuery = ""
         draftQtyInput = ""
         draftTotalInput = ""
-        isProductInputFocused = false
+        isProductInputFocused = targetFocusAfterAdd == activeNameFocusRequester
         localError = null
-        focusManager.clearFocus()
+        if (targetFocusAfterAdd != null) {
+            targetFocusAfterAdd.requestFocus()
+        } else {
+            focusManager.clearFocus()
+        }
+        return true
     }
 
     /**
-     * Commits the manually typed active row of a FREE SALE invoice.
-     * The generated product is transient and is stored only in the invoice line.
+     * Commits the current active ledger row into [draftLines] (without modifying inventory)
+     * so a fresh empty row is immediately ready for the next item on both SALE and PURCHASE.
+     * Purchase additions to inventory happen atomically in one batch when saving the invoice.
      */
-    fun commitActiveFreeSaleLine(): Boolean {
-        if (invoiceMode != InvoiceMode.FREE || invoiceType != InvoiceType.SALE) return false
-        val cleanName = draftSearchQuery.trim()
-        if (cleanName.isBlank()) return false
+    fun commitActiveRowIfReady(
+        targetFocusAfterCommit: FocusRequester? = null,
+        showIncompleteError: Boolean = true
+    ): Boolean {
+        val rowHasInput = draftSearchQuery.isNotBlank() ||
+            draftQtyInput.isNotBlank() ||
+            draftTotalInput.isNotBlank()
+        if (!rowHasInput) return true
 
-        val qty = NumberFormatUtils.parseDecimal(draftQtyInput)
-            ?.takeIf { it.isFinite() && it > 0.0 } ?: 1.0
-        val total = NumberFormatUtils.parseDecimal(draftTotalInput)
-            ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
-        val unitPrice = total / qty
-        if (!unitPrice.isFinite()) {
-            localError = "قيمة الصنف غير صالحة"
+        val cleanName = draftSearchQuery.trim()
+        if (cleanName.isEmpty()) {
+            if (showIncompleteError) {
+                localError = "يرجى إدخال اسم الصنف في السطر الحالي"
+            }
             return false
         }
 
-        lineKeyCounter++
-        val transientProduct = Product(
-            id = "free_${java.util.UUID.randomUUID().toString().replace("-", "")}",
-            name = cleanName,
-            baseUnitName = "حبة",
-            defaultUnitName = "حبة",
-            baseSellPrice = unitPrice,
-            stockBaseQty = 0.0
-        )
-        draftLines.add(
-            PendingUiLine(
-                key = "line_$lineKeyCounter",
-                product = transientProduct,
-                unitName = "حبة",
-                cumulativeFactor = 1.0,
-                unitQty = qty,
-                unitPrice = unitPrice,
-                qtyText = NumberFormatUtils.formatInputNumber(qty, 2),
-                totalText = NumberFormatUtils.formatInputNumber(total, 2),
-                explicitTotal = total
+        val parsedQty = NumberFormatUtils.parseDecimal(draftQtyInput)
+        if (draftQtyInput.isNotBlank() && (parsedQty == null || !parsedQty.isFinite() || parsedQty <= 0.0)) {
+            if (showIncompleteError) {
+                localError = "يرجى إدخال كمية أكبر من صفر في السطر الحالي"
+            }
+            return false
+        }
+        val effectiveQty = parsedQty?.takeIf { it > 0.0 } ?: 1.0
+
+        if (invoiceMode == InvoiceMode.STOCK) {
+            val matchedProduct = products.firstOrNull {
+                it.name.trim().equals(cleanName, ignoreCase = true) ||
+                    (it.barcode.isNotBlank() && it.barcode.trim().equals(cleanName, ignoreCase = true))
+            } ?: productSuggestions.singleOrNull()
+
+            if (matchedProduct == null) {
+                if (showIncompleteError) {
+                    localError = if (invoiceType == InvoiceType.PURCHASE) {
+                        "اختر الصنف من المخزون أو انتقل إلى (فاتورة حرة) لإدخال أصناف جديدة"
+                    } else {
+                        "اختر الصنف من قائمة الاقتراحات بالأسفل"
+                    }
+                    isProductInputFocused = true
+                }
+                return false
+            }
+
+            val units = UnitCostEngine.getAvailableUnits(matchedProduct)
+            val preferredUnit = if (invoiceType == InvoiceType.PURCHASE) {
+                units.last()
+            } else {
+                units.firstOrNull { it.name.equals(matchedProduct.defaultUnitName, ignoreCase = true) }
+                    ?: units.first()
+            }
+            return addProductFromSuggestion(
+                prod = matchedProduct,
+                unitName = preferredUnit.name,
+                factor = preferredUnit.cumulativeFactor,
+                targetFocusAfterAdd = targetFocusAfterCommit
             )
-        )
-        // Resetting the active inputs exposes a fresh empty row immediately.
+        }
+
+        val parsedTotal = NumberFormatUtils.parseDecimal(draftTotalInput)
+        if (parsedTotal == null || !parsedTotal.isFinite() || parsedTotal < 0.0) {
+            if (showIncompleteError) {
+                localError = "يرجى إدخال القيمة الإجمالية للسطر الحالي"
+            }
+            return false
+        }
+
+        val unitPrice = parsedTotal / effectiveQty
+        if (!unitPrice.isFinite()) {
+            if (showIncompleteError) {
+                localError = "قيمة الصنف غير صالحة"
+            }
+            return false
+        }
+
+        if (invoiceType == InvoiceType.PURCHASE) {
+            val existingProd = products.firstOrNull {
+                it.name.trim().equals(cleanName, ignoreCase = true)
+            }
+            if (existingProd != null) {
+                val preferredUnit = UnitCostEngine.getAvailableUnits(existingProd).last()
+                val dupLine = draftLines.any {
+                    it.product.id == existingProd.id &&
+                        it.unitName.equals(preferredUnit.name, ignoreCase = true)
+                }
+                if (dupLine) {
+                    if (showIncompleteError) {
+                        localError = "الصنف (${existingProd.name}) موجود مسبقًا في الفاتورة؛ عدّل الكمية في سطره"
+                    }
+                    return false
+                }
+                lineKeyCounter++
+                draftLines.add(
+                    PendingUiLine(
+                        key = "line_$lineKeyCounter",
+                        product = existingProd,
+                        unitName = preferredUnit.name,
+                        cumulativeFactor = preferredUnit.cumulativeFactor,
+                        unitQty = effectiveQty,
+                        unitPrice = unitPrice,
+                        qtyText = NumberFormatUtils.formatInputNumber(effectiveQty, 2),
+                        totalText = NumberFormatUtils.formatInputNumber(parsedTotal, 2),
+                        explicitTotal = parsedTotal
+                    )
+                )
+            } else {
+                if (draftLines.any { it.product.name.trim().equals(cleanName, ignoreCase = true) }) {
+                    if (showIncompleteError) {
+                        localError = "الصنف ($cleanName) موجود مسبقًا في الفاتورة؛ عدّل الكمية في سطره"
+                    }
+                    return false
+                }
+                lineKeyCounter++
+                val draftPurchaseProduct = Product(
+                    id = "draft_${java.util.UUID.randomUUID().toString().replace("-", "")}",
+                    name = cleanName,
+                    baseUnitName = "حبة",
+                    defaultUnitName = "حبة",
+                    unitTiers = emptyList(),
+                    baseCost = unitPrice,
+                    baseSellPrice = 0.0,
+                    stockBaseQty = 0.0
+                )
+                draftLines.add(
+                    PendingUiLine(
+                        key = "line_$lineKeyCounter",
+                        product = draftPurchaseProduct,
+                        unitName = "حبة",
+                        cumulativeFactor = 1.0,
+                        unitQty = effectiveQty,
+                        unitPrice = unitPrice,
+                        qtyText = NumberFormatUtils.formatInputNumber(effectiveQty, 2),
+                        totalText = NumberFormatUtils.formatInputNumber(parsedTotal, 2),
+                        explicitTotal = parsedTotal
+                    )
+                )
+            }
+        } else {
+            lineKeyCounter++
+            val transientProduct = Product(
+                id = "free_${java.util.UUID.randomUUID().toString().replace("-", "")}",
+                name = cleanName,
+                baseUnitName = "حبة",
+                defaultUnitName = "حبة",
+                baseSellPrice = unitPrice,
+                stockBaseQty = 0.0
+            )
+            draftLines.add(
+                PendingUiLine(
+                    key = "line_$lineKeyCounter",
+                    product = transientProduct,
+                    unitName = "حبة",
+                    cumulativeFactor = 1.0,
+                    unitQty = effectiveQty,
+                    unitPrice = unitPrice,
+                    qtyText = NumberFormatUtils.formatInputNumber(effectiveQty, 2),
+                    totalText = NumberFormatUtils.formatInputNumber(parsedTotal, 2),
+                    explicitTotal = parsedTotal
+                )
+            )
+        }
+
+        // Clear active inputs so the next empty row becomes ready immediately.
         draftSearchQuery = ""
         draftQtyInput = ""
         draftTotalInput = ""
-        isProductInputFocused = false
+        isProductInputFocused = targetFocusAfterCommit == activeNameFocusRequester
         localError = null
-        focusManager.clearFocus()
+        if (targetFocusAfterCommit != null) {
+            targetFocusAfterCommit.requestFocus()
+        } else {
+            focusManager.clearFocus()
+        }
         return true
     }
 
@@ -575,6 +730,9 @@ fun InvoicesScreen(
 
                 Surface(
                     onClick = {
+                        if (hasActiveRowInput) {
+                            commitActiveRowIfReady(targetFocusAfterCommit = null, showIncompleteError = false)
+                        }
                         val target = buildPreviewOrLatestInvoice()
                         if (target != null) {
                             onOpenReceipt(target)
@@ -1058,7 +1216,7 @@ fun InvoicesScreen(
                                             text = if (invoiceType == InvoiceType.SALE) {
                                                 "بيع حر: تُحفظ الأصناف بالفاتورة فقط دون خصم المخزون"
                                             } else {
-                                                "شراء حر: تُضاف الأصناف للمخزون بعد حفظ الفاتورة فقط"
+                                                "شراء حر: تُضاف جميع الأصناف للمخزون دفعة واحدة عند الحفظ"
                                             },
                                             style = MaterialTheme.typography.labelSmall,
                                             fontWeight = FontWeight.Bold,
@@ -1452,9 +1610,10 @@ fun InvoicesScreen(
 
                                 // Active Input Row (Direct Inline Typing in Total | Qty | Details + Live Inferred Unit Price)
                                 val activeQtyParsed = NumberFormatUtils.parseDecimal(draftQtyInput)?.takeIf { it > 0.0 }
-                                val activeTotalParsed = NumberFormatUtils.parseDecimal(draftTotalInput)?.takeIf { it > 0.0 }
-                                val activeInferredText = if (activeTotalParsed != null && activeQtyParsed != null) {
-                                    NumberFormatUtils.formatNumber(activeTotalParsed / activeQtyParsed)
+                                val activeTotalParsed = NumberFormatUtils.parseDecimal(draftTotalInput)?.takeIf { it >= 0.0 }
+                                val effectiveActiveQtyForUnit = activeQtyParsed ?: if (activeTotalParsed != null) 1.0 else null
+                                val activeInferredText = if (activeTotalParsed != null && effectiveActiveQtyForUnit != null && effectiveActiveQtyForUnit > 0.0) {
+                                    NumberFormatUtils.formatNumber(activeTotalParsed / effectiveActiveQtyForUnit)
                                 } else {
                                     "-"
                                 }
@@ -1479,6 +1638,7 @@ fun InvoicesScreen(
                                             value = draftTotalInput,
                                             onValueChange = { raw ->
                                                 draftTotalInput = NumberFormatUtils.sanitizeDecimalInput(raw)
+                                                localError = null
                                             },
                                             singleLine = true,
                                             cursorBrush = SolidColor(LedgerNavy),
@@ -1494,8 +1654,12 @@ fun InvoicesScreen(
                                                 keyboardType = KeyboardType.Decimal,
                                                 imeAction = ImeAction.Next
                                             ),
+                                            keyboardActions = KeyboardActions(
+                                                onNext = { activeQtyFocusRequester.requestFocus() }
+                                            ),
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .focusRequester(activeTotalFocusRequester)
                                                 .testTag("draft_total_inline_input"),
                                             decorationBox = { innerTextField ->
                                                 Box(contentAlignment = Alignment.Center) {
@@ -1522,6 +1686,7 @@ fun InvoicesScreen(
                                             value = draftQtyInput,
                                             onValueChange = { raw ->
                                                 draftQtyInput = NumberFormatUtils.sanitizeDecimalInput(raw)
+                                                localError = null
                                             },
                                             singleLine = true,
                                             cursorBrush = SolidColor(LedgerNavy),
@@ -1537,8 +1702,12 @@ fun InvoicesScreen(
                                                 keyboardType = KeyboardType.Decimal,
                                                 imeAction = ImeAction.Next
                                             ),
+                                            keyboardActions = KeyboardActions(
+                                                onNext = { activeNameFocusRequester.requestFocus() }
+                                            ),
                                             modifier = Modifier
                                                 .fillMaxWidth()
+                                                .focusRequester(activeQtyFocusRequester)
                                                 .testTag("draft_qty_inline_input"),
                                             decorationBox = { innerTextField ->
                                                 Box(contentAlignment = Alignment.Center) {
@@ -1553,7 +1722,7 @@ fun InvoicesScreen(
 
                                     VerticalDivider(color = LedgerNavy.copy(alpha = 0.7f), modifier = Modifier.fillMaxHeight())
 
-                                    // Col 3: التفاصيل (Direct Product Search Input + Full Picker Icon)
+                                    // Col 3: التفاصيل (Direct Product Search / Manual Entry + Commit/Picker Icons)
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
@@ -1566,6 +1735,7 @@ fun InvoicesScreen(
                                             onValueChange = {
                                                 draftSearchQuery = it
                                                 isProductInputFocused = true
+                                                localError = null
                                             },
                                             singleLine = true,
                                             cursorBrush = SolidColor(LedgerNavy),
@@ -1581,15 +1751,21 @@ fun InvoicesScreen(
                                             ),
                                             keyboardActions = KeyboardActions(
                                                 onSearch = {
-                                                    if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.SALE &&
-                                                        !commitActiveFreeSaleLine()
-                                                    ) {
-                                                        localError = "أدخل اسم الصنف والإجمالي، والكمية (أو اتركها 1)، ثم اضغط بحث لإضافة السطر"
-                                                    }
+                                                    commitActiveRowIfReady(
+                                                        targetFocusAfterCommit = activeTotalFocusRequester,
+                                                        showIncompleteError = true
+                                                    )
+                                                },
+                                                onDone = {
+                                                    commitActiveRowIfReady(
+                                                        targetFocusAfterCommit = activeTotalFocusRequester,
+                                                        showIncompleteError = true
+                                                    )
                                                 }
                                             ),
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .focusRequester(activeNameFocusRequester)
                                                 .onFocusChanged { state ->
                                                     if (state.isFocused) {
                                                         isProductInputFocused = true
@@ -1602,11 +1778,13 @@ fun InvoicesScreen(
                                                     modifier = Modifier.fillMaxWidth()
                                                 ) {
                                                     if (draftSearchQuery.isEmpty()) {
+                                                        val rowNum = draftLines.size + 1
                                                         Text(
                                                             text = when {
-                                                                invoiceType == InvoiceType.PURCHASE -> "اسم الصنف للشراء..."
-                                                                products.isEmpty() -> "أضف أصناف أولاً..."
-                                                                else -> "اكتب اسم الصنف..."
+                                                                invoiceType == InvoiceType.PURCHASE -> "$rowNum. اسم الصنف للشراء..."
+                                                                invoiceMode == InvoiceMode.FREE -> "$rowNum. اكتب الصنف الحر..."
+                                                                products.isEmpty() -> "$rowNum. أضف أصناف أولاً..."
+                                                                else -> "$rowNum. اكتب اسم الصنف..."
                                                             },
                                                             fontFamily = AmiriFontFamily,
                                                             color = Color(0xFF94A3B8),
@@ -1619,6 +1797,28 @@ fun InvoicesScreen(
                                                 }
                                             }
                                         )
+                                        if (hasActiveRowInput) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .size(24.dp)
+                                                    .clip(CircleShape)
+                                                    .clickable {
+                                                        commitActiveRowIfReady(
+                                                            targetFocusAfterCommit = activeNameFocusRequester,
+                                                            showIncompleteError = true
+                                                        )
+                                                    }
+                                                    .testTag("commit_active_row_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.AddCircleOutline,
+                                                    contentDescription = "إضافة السطر وفتح صف جديد",
+                                                    tint = LedgerGreen,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
                                         Box(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
@@ -1626,7 +1826,13 @@ fun InvoicesScreen(
                                                 .clip(CircleShape)
                                                 .clickable {
                                                     if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.SALE) {
-                                                        if (!commitActiveFreeSaleLine()) showFreeSaleDialog = true
+                                                        if (!commitActiveRowIfReady(
+                                                                targetFocusAfterCommit = activeNameFocusRequester,
+                                                                showIncompleteError = false
+                                                            )
+                                                        ) {
+                                                            showFreeSaleDialog = true
+                                                        }
                                                     } else if (invoiceMode == InvoiceMode.FREE) {
                                                         showQuickWholesaleDialog = true
                                                     } else {
@@ -1659,6 +1865,106 @@ fun InvoicesScreen(
                                             color = if (activeInferredText == "-") Color(0xFFCBD5E1) else Color(0xFF94A3B8),
                                             maxLines = 1
                                         )
+                                    }
+                                }
+
+                                // Auto-Created Next Empty Row whenever the active row starts being filled (for both SALE and PURCHASE)
+                                AnimatedVisibility(visible = hasActiveRowInput) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
+                                        HorizontalDivider(thickness = 0.8.dp, color = LedgerNavy.copy(alpha = 0.45f))
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(IntrinsicSize.Min)
+                                                .heightIn(min = 34.dp)
+                                                .background(Color(0xFFF1F5F9).copy(alpha = 0.7f))
+                                                .testTag("auto_next_row"),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .weight(0.92f)
+                                                    .fillMaxHeight()
+                                                    .clickable {
+                                                        commitActiveRowIfReady(
+                                                            targetFocusAfterCommit = activeTotalFocusRequester,
+                                                            showIncompleteError = true
+                                                        )
+                                                    }
+                                                    .padding(horizontal = 3.dp, vertical = 4.dp)
+                                                    .testTag("auto_next_total_cell")
+                                            ) {
+                                                Text(
+                                                    text = "0",
+                                                    fontFamily = AmiriFontFamily,
+                                                    color = Color(0xFFCBD5E1),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp
+                                                )
+                                            }
+                                            VerticalDivider(color = LedgerNavy.copy(alpha = 0.35f), modifier = Modifier.fillMaxHeight())
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .weight(0.66f)
+                                                    .fillMaxHeight()
+                                                    .clickable {
+                                                        commitActiveRowIfReady(
+                                                            targetFocusAfterCommit = activeQtyFocusRequester,
+                                                            showIncompleteError = true
+                                                        )
+                                                    }
+                                                    .padding(horizontal = 3.dp, vertical = 4.dp)
+                                                    .testTag("auto_next_qty_cell")
+                                            ) {
+                                                Text(
+                                                    text = "-",
+                                                    fontFamily = AmiriFontFamily,
+                                                    color = Color(0xFFCBD5E1),
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.sp
+                                                )
+                                            }
+                                            VerticalDivider(color = LedgerNavy.copy(alpha = 0.35f), modifier = Modifier.fillMaxHeight())
+                                            Box(
+                                                contentAlignment = Alignment.CenterStart,
+                                                modifier = Modifier
+                                                    .weight(1.82f)
+                                                    .fillMaxHeight()
+                                                    .clickable {
+                                                        commitActiveRowIfReady(
+                                                            targetFocusAfterCommit = activeNameFocusRequester,
+                                                            showIncompleteError = true
+                                                        )
+                                                    }
+                                                    .padding(horizontal = 5.dp, vertical = 3.dp)
+                                                    .testTag("auto_next_name_cell")
+                                            ) {
+                                                Text(
+                                                    text = "${draftLines.size + 2}. صف جديد تلقائي (اضغط للإضافة والانتقال...)",
+                                                    fontFamily = AmiriFontFamily,
+                                                    color = Color(0xFF94A3B8),
+                                                    fontSize = 11.5.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            VerticalDivider(color = LedgerNavy.copy(alpha = 0.25f), modifier = Modifier.fillMaxHeight())
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier
+                                                    .weight(0.60f)
+                                                    .padding(vertical = 3.dp)
+                                            ) {
+                                                Text(
+                                                    text = "-",
+                                                    fontFamily = AmiriFontFamily,
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFFCBD5E1)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1998,28 +2304,17 @@ fun InvoicesScreen(
                     Button(
                         enabled = !isBusy,
                         onClick = {
-                            if (draftLines.isEmpty() &&
-                                invoiceMode == InvoiceMode.FREE &&
-                                invoiceType == InvoiceType.SALE
-                            ) {
-                                commitActiveFreeSaleLine()
-                            }
-                            if (draftLines.isEmpty() &&
-                                invoiceMode == InvoiceMode.FREE &&
-                                invoiceType == InvoiceType.PURCHASE &&
-                                draftSearchQuery.isNotBlank()
-                            ) {
-                                // Purchase-free lines need wholesale/base-unit conversion details.
-                                // Open the unit-aware form instead of rejecting the typed active row.
-                                showQuickWholesaleDialog = true
-                                return@Button
+                            if (hasActiveRowInput) {
+                                if (!commitActiveRowIfReady(
+                                        targetFocusAfterCommit = null,
+                                        showIncompleteError = true
+                                    )
+                                ) {
+                                    return@Button
+                                }
                             }
                             if (draftLines.isEmpty()) {
-                                localError = if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.PURCHASE) {
-                                    "أضف الصنف من زر الإضافة وأكمل بيانات وحدة الجملة قبل حفظ فاتورة الشراء الحرة"
-                                } else {
-                                    "أدخل اسم الصنف والإجمالي في السطر الحالي أو أضف صنفاً واحداً على الأقل"
-                                }
+                                localError = "أدخل اسم الصنف والقيمة في السطر الحالي أو أضف صنفاً واحداً على الأقل"
                                 return@Button
                             }
                             if (draftLines.any { it.unitQty <= 0.0 }) {
@@ -2147,6 +2442,9 @@ fun InvoicesScreen(
 
                     Button(
                         onClick = {
+                            if (hasActiveRowInput) {
+                                commitActiveRowIfReady(targetFocusAfterCommit = null, showIncompleteError = false)
+                            }
                             val target = buildPreviewOrLatestInvoice()
                             if (target != null) {
                                 onOpenReceipt(target)
@@ -2740,7 +3038,7 @@ private fun SmartProductSuggestionsPanel(
                     )
                     Text(
                         text = if (invoiceType == InvoiceType.PURCHASE) {
-                            "شراء جملة (تضاف الكميات للمخزون)"
+                            "شراء جملة (تُضاف الأصناف للمخزون دفعة واحدة عند الحفظ)"
                         } else if (query.isBlank()) {
                             "أصناف مقترحة (اضغط على الوحدة للإضافة)"
                         } else {
@@ -2798,7 +3096,7 @@ private fun SmartProductSuggestionsPanel(
                         )
                         Text(
                             text = if (invoiceType == InvoiceType.PURCHASE) {
-                                if (query.isNotBlank()) "+ إضافة صنف جديد للمخزون وشرائه جملة: \"${query.trim()}\"" else "+ تعريف صنف جديد في المخزون والشراء جملة"
+                                if (query.isNotBlank()) "+ إضافة صنف بوحدة جملة للفاتورة (يُحفظ بالمخزون عند الحفظ): \"${query.trim()}\"" else "+ إضافة صنف بوحدة جملة للفاتورة (يُحفظ بالمخزون عند الحفظ)"
                             } else {
                                 if (query.isNotBlank()) "+ إضافة صنف حر لهذه الفاتورة: \"${query.trim()}\"" else "+ إضافة صنف حر للفاتورة"
                             },

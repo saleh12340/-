@@ -500,4 +500,65 @@ class InvoiceModeTest {
         assertTrue(result.isFailure)
         assertEquals(20.0, dataSource.observeProducts("u1").first().single().stockBaseQty, 1e-9)
     }
+
+    @Test
+    fun `11_multi_row_purchase_adds_all_items_to_inventory_in_one_batch_only_on_save`() = runBlocking {
+        val ds = LocalWarehouseDataSource(storageFile = null)
+        val vm = WarehouseViewModel(ds, "u1")
+        val existingId = ds.saveProduct(
+            userId = "u1", existingId = null, name = "زيت طبخ", barcode = "",
+            baseUnitName = "حبة", defaultUnitName = "كرتون",
+            unitTiers = listOf(UnitTier("كرتون", 6.0)),
+            baseCost = 500.0, baseSellPrice = 650.0, stockBaseQty = 6.0,
+            trackExpiry = false, expiryDate = "", minStockAlert = 0.0
+        ).getOrThrow()
+        val supplierId = ds.saveContact("u1", null, "مورد الجملة", ContactType.SUPPLIER, "", 0.0, "").getOrThrow()
+
+        // Step 1: Drafting 2 new items + 1 existing item adds NOTHING to inventory before Save
+        val draftA = vm.createProductFromPurchase(
+            name = "مكرونة", barcode = "", baseUnitName = "حبة",
+            wholesaleUnitName = "كرتون", factor = 20.0,
+            wholesaleUnitCost = 4000.0, baseSellPrice = 250.0
+        ).getOrThrow()
+        val draftB = vm.createProductFromPurchase(
+            name = "شاي فاخر", barcode = "", baseUnitName = "حبة",
+            wholesaleUnitName = "حبة", factor = 1.0,
+            wholesaleUnitCost = 350.0, baseSellPrice = 0.0
+        ).getOrThrow()
+
+        // Inventory still contains ONLY the original product untouched before Save
+        val beforeSave = ds.observeProducts("u1").first()
+        assertEquals(1, beforeSave.size)
+        assertEquals(6.0, beforeSave.single { it.id == existingId }.stockBaseQty, 1e-9)
+
+        // Step 2: Saving the invoice commits ALL rows together in one batch into inventory
+        val savedInvoice = ds.postInvoice(
+            userId = "u1",
+            invoiceNumber = "BATCH-PUR-1",
+            invoiceType = InvoiceType.PURCHASE,
+            paymentMethod = PaymentMethod.CREDIT,
+            contactId = supplierId,
+            contactName = "مورد الجملة",
+            draftLines = listOf(
+                InvoiceDraftLine(existingId, "كرتون", 2.0, 3300.0, invoiceMode = InvoiceMode.FREE),
+                InvoiceDraftLine("", "كرتون", 3.0, 4000.0, draftA, InvoiceMode.FREE, productName = "مكرونة"),
+                InvoiceDraftLine("", "حبة", 10.0, 350.0, draftB, InvoiceMode.FREE, productName = "شاي فاخر")
+            ),
+            notes = "دفعة واحدة",
+            discount = 100.0,
+            paidAmount = 2000.0
+        ).getOrThrow()
+
+        assertEquals(3, savedInvoice.lines.size)
+        assertEquals(22100.0, savedInvoice.subtotalAmount, 1e-9) // 6600 + 12000 + 3500
+        assertEquals(22000.0, savedInvoice.totalAmount, 1e-9)
+        assertEquals(20000.0, ds.observeContacts("u1").first().single { it.id == supplierId }.balance, 1e-9)
+
+        val afterSave = ds.observeProducts("u1").first()
+        assertEquals(3, afterSave.size)
+        assertEquals(18.0, afterSave.first { it.id == existingId }.stockBaseQty, 1e-9) // 6 + (2*6)
+        assertEquals(60.0, afterSave.first { it.name == "مكرونة" }.stockBaseQty, 1e-9) // 3*20
+        assertEquals(10.0, afterSave.first { it.name == "شاي فاخر" }.stockBaseQty, 1e-9)
+    }
 }
+
