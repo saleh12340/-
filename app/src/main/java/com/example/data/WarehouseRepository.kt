@@ -7,6 +7,7 @@ import com.example.domain.ContactType
 import com.example.domain.Invoice
 import com.example.domain.InvoiceLine
 import com.example.domain.InvoiceType
+import com.example.domain.InvoiceMode
 import com.example.domain.Payment
 import com.example.domain.PaymentMethod
 import com.example.domain.Product
@@ -396,6 +397,10 @@ class WarehouseRepository(
             val uid = requireUserId()
             check(uid == userId) { "تعارض هوية المستخدم" }
             require(draftLines.isNotEmpty() && draftLines.size <= 50) { "يجب إضافة صنف واحد على الأقل للفاتورة" }
+            val invoiceMode = draftLines.first().invoiceMode
+            require(draftLines.all { it.invoiceMode == invoiceMode }) {
+                "لا يمكن خلط أصناف الفاتورة الحرة مع أصناف فاتورة المخزن"
+            }
             if (paymentMethod == PaymentMethod.CREDIT) {
                 require(contactId.isNotBlank()) { "يرجى اختيار العميل أو المورد للفاتورة الآجلة" }
             }
@@ -556,7 +561,8 @@ class WarehouseRepository(
                 }
                 tx.set(invoiceDocRef, mapOf(
                     "userId" to uid, "invoiceNumber" to cleanNumber.take(40),
-                    "invoiceType" to invoiceType.name, "paymentMethod" to paymentMethod.name,
+                    "invoiceType" to invoiceType.name, "invoiceMode" to invoiceMode.name,
+                    "paymentMethod" to paymentMethod.name,
                     "contactId" to contactId.trim(), "contactName" to resolvedContactName,
                     "totalAmount" to grandTotal, "lines" to serializedLines,
                     "notes" to notes.trim().take(300),
@@ -596,6 +602,7 @@ class WarehouseRepository(
                 Invoice(
                     id = invoiceDocRef.id, userId = uid, invoiceNumber = cleanNumber.take(40),
                     invoiceType = invoiceType.name, paymentMethod = paymentMethod.name,
+                    invoiceMode = invoiceMode.name,
                     contactId = contactId.trim(), contactName = resolvedContactName,
                     totalAmount = grandTotal, lines = finalLines, notes = notes.trim().take(300)
                 )
@@ -831,6 +838,7 @@ class WarehouseRepository(
                     mapOf(
                         "invoiceNumber" to cleanNumber,
                         "invoiceType" to invoiceType.name,
+                        "invoiceMode" to invoiceMode.name,
                         "paymentMethod" to paymentMethod.name,
                         "contactId" to contactId.trim(),
                         "contactName" to resolvedContactName,
@@ -878,6 +886,7 @@ class WarehouseRepository(
                     invoiceNumber = cleanNumber,
                     invoiceType = invoiceType.name,
                     paymentMethod = paymentMethod.name,
+                    invoiceMode = invoiceMode.name,
                     contactId = contactId.trim(),
                     contactName = resolvedContactName,
                     totalAmount = grandTotal,
