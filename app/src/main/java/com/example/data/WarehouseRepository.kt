@@ -444,6 +444,14 @@ class WarehouseRepository(
                     require(sameName.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
                         "الصنف موجود في المخزن بوحدة أساسية مختلفة؛ اختر الصنف المسجل"
                     }
+                    val sameUnitStructure = sameName.unitTiers.size == source.unitTiers.size &&
+                        sameName.unitTiers.zip(source.unitTiers).all { (existingTier, draftTier) ->
+                            existingTier.name.equals(draftTier.name, ignoreCase = true) &&
+                                kotlin.math.abs(existingTier.factorToPrevious - draftTier.factorToPrevious) < 1e-9
+                        }
+                    require(sameUnitStructure) {
+                        "الصنف موجود بالاسم نفسه لكن تحويل وحداته مختلف؛ راجع وحدات الصنف قبل اعتماد الفاتورة"
+                    }
                 } else if (source.barcode.isNotBlank()) {
                     require(storedProductsForMatch.none {
                         it.barcode.trim().equals(source.barcode.trim(), ignoreCase = true)
@@ -672,6 +680,14 @@ class WarehouseRepository(
                 if (sameName != null) {
                     require(sameName.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
                         "الصنف موجود في المخزن بوحدة أساسية مختلفة؛ اختر الصنف المسجل"
+                    }
+                    val sameUnitStructure = sameName.unitTiers.size == source.unitTiers.size &&
+                        sameName.unitTiers.zip(source.unitTiers).all { (existingTier, draftTier) ->
+                            existingTier.name.equals(draftTier.name, ignoreCase = true) &&
+                                kotlin.math.abs(existingTier.factorToPrevious - draftTier.factorToPrevious) < 1e-9
+                        }
+                    require(sameUnitStructure) {
+                        "الصنف موجود بالاسم نفسه لكن تحويل وحداته مختلف؛ راجع وحدات الصنف قبل اعتماد الفاتورة"
                     }
                 } else if (source.barcode.isNotBlank()) {
                     require(storedProductsForMatch.none {
