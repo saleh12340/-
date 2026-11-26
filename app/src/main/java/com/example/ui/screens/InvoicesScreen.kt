@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -397,6 +398,57 @@ fun InvoicesScreen(
         isProductInputFocused = false
         localError = null
         focusManager.clearFocus()
+    }
+
+    /**
+     * Commits the manually typed active row of a FREE SALE invoice.
+     * The generated product is transient and is stored only in the invoice line.
+     */
+    fun commitActiveFreeSaleLine(): Boolean {
+        if (invoiceMode != InvoiceMode.FREE || invoiceType != InvoiceType.SALE) return false
+        val cleanName = draftSearchQuery.trim()
+        if (cleanName.isBlank()) return false
+
+        val qty = NumberFormatUtils.parseDecimal(draftQtyInput)
+            ?.takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+        val total = NumberFormatUtils.parseDecimal(draftTotalInput)
+            ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
+        val unitPrice = total / qty
+        if (!unitPrice.isFinite()) {
+            localError = "قيمة الصنف غير صالحة"
+            return false
+        }
+
+        lineKeyCounter++
+        val transientProduct = Product(
+            id = "free_${java.util.UUID.randomUUID().toString().replace("-", "")}",
+            name = cleanName,
+            baseUnitName = "حبة",
+            defaultUnitName = "حبة",
+            baseSellPrice = unitPrice,
+            stockBaseQty = 0.0
+        )
+        draftLines.add(
+            PendingUiLine(
+                key = "line_$lineKeyCounter",
+                product = transientProduct,
+                unitName = "حبة",
+                cumulativeFactor = 1.0,
+                unitQty = qty,
+                unitPrice = unitPrice,
+                qtyText = NumberFormatUtils.formatInputNumber(qty, 2),
+                totalText = NumberFormatUtils.formatInputNumber(total, 2),
+                explicitTotal = total
+            )
+        )
+        // Resetting the active inputs exposes a fresh empty row immediately.
+        draftSearchQuery = ""
+        draftQtyInput = ""
+        draftTotalInput = ""
+        isProductInputFocused = false
+        localError = null
+        focusManager.clearFocus()
+        return true
     }
 
     fun buildPreviewOrLatestInvoice(): Invoice? {
@@ -1356,6 +1408,15 @@ fun InvoicesScreen(
                                                 keyboardType = KeyboardType.Text,
                                                 imeAction = ImeAction.Search
                                             ),
+                                            keyboardActions = KeyboardActions(
+                                                onSearch = {
+                                                    if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.SALE &&
+                                                        !commitActiveFreeSaleLine()
+                                                    ) {
+                                                        localError = "أدخل اسم الصنف والإجمالي، والكمية (أو اتركها 1)، ثم اضغط بحث لإضافة السطر"
+                                                    }
+                                                }
+                                            ),
                                             modifier = Modifier
                                                 .weight(1f)
                                                 .onFocusChanged { state ->
@@ -1393,8 +1454,13 @@ fun InvoicesScreen(
                                                 .size(24.dp)
                                                 .clip(CircleShape)
                                                 .clickable {
-                                                    if (invoiceMode == InvoiceMode.FREE) showQuickWholesaleDialog = true
-                                                    else showAddLineDialog = true
+                                                    if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.SALE) {
+                                                        if (!commitActiveFreeSaleLine()) showQuickWholesaleDialog = true
+                                                    } else if (invoiceMode == InvoiceMode.FREE) {
+                                                        showQuickWholesaleDialog = true
+                                                    } else {
+                                                        showAddLineDialog = true
+                                                    }
                                                 }
                                         ) {
                                             Icon(
@@ -1594,8 +1660,18 @@ fun InvoicesScreen(
                     Button(
                         enabled = !isBusy,
                         onClick = {
+                            if (draftLines.isEmpty() &&
+                                invoiceMode == InvoiceMode.FREE &&
+                                invoiceType == InvoiceType.SALE
+                            ) {
+                                commitActiveFreeSaleLine()
+                            }
                             if (draftLines.isEmpty()) {
-                                localError = "يرجى إضافة صنف واحد على الأقل للفاتورة"
+                                localError = if (invoiceMode == InvoiceMode.FREE && invoiceType == InvoiceType.PURCHASE) {
+                                    "أضف الصنف من زر الإضافة وأكمل بيانات وحدة الجملة قبل حفظ فاتورة الشراء الحرة"
+                                } else {
+                                    "أدخل اسم الصنف والإجمالي في السطر الحالي أو أضف صنفاً واحداً على الأقل"
+                                }
                                 return@Button
                             }
                             if (draftLines.any { it.unitQty <= 0.0 }) {
