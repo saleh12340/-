@@ -947,6 +947,14 @@ private fun materializePurchaseDraftProduct(
         require(duplicate.baseUnitName.equals(source.baseUnitName, ignoreCase = true)) {
             "يوجد صنف بالاسم نفسه ولكن بوحدة أساسية مختلفة"
         }
+        val sameUnitStructure = duplicate.unitTiers.size == source.unitTiers.size &&
+            duplicate.unitTiers.zip(source.unitTiers).all { (existingTier, draftTier) ->
+                existingTier.name.equals(draftTier.name, ignoreCase = true) &&
+                    kotlin.math.abs(existingTier.factorToPrevious - draftTier.factorToPrevious) < 1e-9
+            }
+        require(sameUnitStructure) {
+            "الصنف موجود بالاسم نفسه لكن تحويل وحداته مختلف؛ راجع وحدات الصنف قبل اعتماد الفاتورة"
+        }
         return duplicate
     }
     if (source.barcode.isNotBlank()) {
