@@ -975,6 +975,11 @@ private fun CustomerLedgerOperationsScreen(
         if (selectedIds.isNotEmpty()) {
             val selectedOps = allOps.filter { selectedIds.contains(it.id) }
             val selectedTotal = selectedOps.sumOf { it.amount }
+            val selectedDebit = selectedOps.filter { it.isInvoice }.sumOf { it.amount }
+            val selectedCredit = selectedOps.filterNot { it.isInvoice }.sumOf { it.amount } +
+                selectedOps.filterIsInstance<LedgerOpItem.InvoiceOp>().sumOf {
+                    it.invoice.resolvedPaidAmount.coerceAtLeast(0.0)
+                }
 
             androidx.compose.material3.Surface(
                 color = LedgerNavy,
@@ -1008,6 +1013,8 @@ private fun CustomerLedgerOperationsScreen(
                                 val summaryText = buildString {
                                     appendLine("*كشف عمليات ${contact.name} (${selectedOps.size} عملية محددة)*")
                                     appendLine("إجمالي العمليات المحددة: ${NumberFormatUtils.formatNumber(selectedTotal)} ريال")
+                                    appendLine("إجمالي المدين المحدد: ${NumberFormatUtils.formatNumber(selectedDebit)} ريال")
+                                    appendLine("إجمالي الدائن المحدد: ${NumberFormatUtils.formatNumber(selectedCredit)} ريال")
                                     appendLine("الرصيد الصافي للحساب: ${NumberFormatUtils.formatNumber(contact.balance)} ريال")
                                     appendLine("──────────────────")
                                     selectedOps.forEach { op ->
