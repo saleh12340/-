@@ -448,7 +448,7 @@ class LocalWarehouseDataSource internal constructor(
                     updatedAt = now
                 )
 
-                productsFlow.value = productsFlow.value.map { productsMap[it.id] ?: it }
+                productsFlow.value = productsMap.values.toList()
                 contactsFlow.value = contactsFlow.value.map { contactsMap[it.id] ?: it }
                 invoicesFlow.value = invoicesFlow.value.map { if (it.id == invoiceId) updatedInvoice else it }
                 persistToDiskLocked()
@@ -476,7 +476,7 @@ class LocalWarehouseDataSource internal constructor(
                         }
                         productsMap[oldLine.productId] = existingProd.copy(stockBaseQty = restoredQty, updatedAt = now)
                     }
-                    productsFlow.value = productsFlow.value.map { productsMap[it.id] ?: it }
+                    productsFlow.value = productsMap.values.toList()
 
                     if (oldInvoice.resolvedPaymentMethod == PaymentMethod.CREDIT && oldInvoice.contactId.isNotBlank()) {
                         contactsFlow.value = contactsFlow.value.map { c ->
