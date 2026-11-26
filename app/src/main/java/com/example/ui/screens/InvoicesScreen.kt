@@ -2382,15 +2382,17 @@ private fun QuickWholesaleProductDialog(
                     LtrDecimalField(
                         value = wholesaleCostText,
                         onValueChange = { wholesaleCostText = NumberFormatUtils.sanitizeDecimalInput(it) },
-                        label = "سعر شراء الجملة",
+                        label = if (invoiceType == InvoiceType.PURCHASE) "سعر شراء الجملة" else "سعر الوحدة في الفاتورة",
                         modifier = Modifier.weight(1f)
                     )
-                    LtrDecimalField(
-                        value = baseSellText,
-                        onValueChange = { baseSellText = NumberFormatUtils.sanitizeDecimalInput(it) },
-                        label = "سعر بيع الحبة",
-                        modifier = Modifier.weight(1f)
-                    )
+                    if (invoiceType == InvoiceType.PURCHASE) {
+                        LtrDecimalField(
+                            value = baseSellText,
+                            onValueChange = { baseSellText = NumberFormatUtils.sanitizeDecimalInput(it) },
+                            label = "سعر بيع الحبة",
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
 
                 if (addedBaseUnits > 0.0 && invoiceType == InvoiceType.PURCHASE) {
